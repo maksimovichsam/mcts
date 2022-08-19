@@ -4,7 +4,7 @@ import random
 
 
 class MCTSNode(ABC):
-    c = math.sqrt(2)
+    c = math.sqrt(0.5)
     
     def __init__(self):
         self.visits = 0
@@ -86,6 +86,4 @@ class MCTS:
             for idx, node in enumerate(path):
                 r_i = 0.5 if r == 0 else max(0, r * (-2 * (idx % 2) + 1))
                 node.add_reward(r_i)
-
-        path.pop()
-            
+ 

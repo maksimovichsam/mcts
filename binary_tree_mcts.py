@@ -9,6 +9,7 @@ class BinaryTreeNode(MCTSNode):
         self.val = val
         self.left = left
         self.right = right
+        self.direction = val
 
     def children(self):
         res = []
@@ -41,69 +42,100 @@ def level_traversal(root):
         level = new_level
 
 
-def generate_tree(levels=1):
+def generate_tree(values, levels=1):
     count = 2**levels - 1
     root = BinaryTreeNode()
     count -= 1
 
-    for node in level_traversal(root):
-        if count <= 0:
-            return root
-            
-        node.left = BinaryTreeNode()
-        node.right = BinaryTreeNode()
-        count -= 2
+    for idx, node in enumerate(level_traversal(root)):
+        node.val = values[idx]
+        node.direction = values[idx]
+        if count > 0:
+            node.left = BinaryTreeNode()
+            node.right = BinaryTreeNode()
+            count -= 2
+    return root
 
-        if count < 2**(levels - 1):
-            node.left.val = random.choice([-1, 0, 1])
-            node.right.val = random.choice([-1, 0, 1])
+
+def pretty_print_tree(root, levels, str_fn=lambda node: f"{node.val:>.0f}".rjust(2, '_')):
+    nodes = 2**(levels - 1)
+    node_width = len(str_fn(root))
+    total_width = (node_width + 1) * nodes 
+    level = []
+    for idx, node in enumerate(level_traversal(root)):
+        level.append(node)
+        # idx + 2 is a power of 2
+        if (idx + 2) & (idx + 1) == 0:
+            num_spaces = (total_width // len(level)) - node_width
+            print((" " * num_spaces).join(map(str_fn, level)))
+            if len(level) != nodes:
+                next_num_spaces = (total_width // (len(level) * 2)) - node_width
+                branches = "|" + " " * (node_width - 1) + "\\" + "_" * (node_width + next_num_spaces - 1) + " " * (num_spaces - node_width - next_num_spaces)
+                print(branches * len(level))
+            level.clear()
+    
+
+def minimax(root, player=0):
+    if root.left is None and root.right is None:
+        return root.val
+
+    next_player = (player + 1) % 2
+    left = minimax(root.left, player=next_player)
+    right = minimax(root.right, player=next_player)
+    if (left > right and player == 0) or (left < right and player == 1):
+        root.val = left
+        root.direction = 'L'
+    else:
+        root.val = right
+        root.direction = 'R'
+
+    return root.val
 
 
 if __name__ == "__main__":
+    tree_values = ([0] * 15) + [1,-1,1,1,1,-1,-1,-1,-1,-1,1,-1,1,1,-1,-1]
     levels = 5
     separator = "-" * ((4 * 2**(levels - 1)) - 1)
-    root = generate_tree(levels)
-    for idx, node in enumerate(level_traversal(root)):
-        # idx + 2 is a power of 2
-        if (idx + 2) & (idx + 1) == 0:
-            print(f"{node.val:>2}")
-        else:
-            print(f"{node.val:>2}", end=', ')
+    root = generate_tree(tree_values, levels)
+
+    pretty_print_tree(root, levels)
     print(separator)
 
-    import pickle
-    
-    save_file = "ttt.pickle"
-
-    playouts = 10_000
-    for i in range(playouts):
-        MCTS.select(root, num_rollouts=1)
-
-    for idx, node in enumerate(level_traversal(root)):
-        val = f"{node.total_reward / node.visits:5.2f}"
-        if (idx + 2) & (idx + 1) == 0:
-            print(val)
-        else:
-            print(val, end=', ')
-    
-    print(separator)
-
-    for idx, node in enumerate(level_traversal(root)):
-        val = f"{'??':>5}"
+    def get_node_value(node):
+        val = f"{'?'}"
         if node.visits > 0:
             val = f"{node.total_reward / node.visits:5.2f}"
+        return val.rjust(5, "_")
+
+    playouts = 100_000
+    for i in range(playouts):
+        MCTS.select(root, num_rollouts=1)
+        # pretty_print_tree(root, levels, get_node_value)
+        continue
+
+    pretty_print_tree(root, levels, get_node_value)    
+    print(separator)
+
+    def get_mcts_direction(node):
+        val = f"{'??'}"
+        if node.visits > 0:
+            val = f"{node.total_reward / node.visits:4.2f}"
         if node.left and node.right:
             if node.left.visits == 0 or node.right.visits == 0:
-                val = f"{'?':>5}"
+                val = f"{'?'}"
             else:
                 l = node.left.total_reward / node.left.visits
                 r = node.right.total_reward / node.right.visits
-                val = f"{'L' if l > r else 'R':>5}"
+                val = f"{'L' if l > r else 'R'}"
+        return val.rjust(4, "_")
 
-        if (idx + 2) & (idx + 1) == 0:
-            print(val)
-        else:
-            print(val, end=', ')
+    pretty_print_tree(root, levels, get_mcts_direction)    
+    print(separator)
+
+    minimax(root)
+    d = lambda node: f"{node.direction}".rjust(2, "_")
+    pretty_print_tree(root, levels, d)
+    print(separator)
 
     
             
