@@ -4,7 +4,7 @@ import random
 
 
 class MCTSNode(ABC):
-    c = math.sqrt(0.5)
+    c = math.sqrt(2)
     
     def __init__(self):
         self.visits = 0
@@ -48,6 +48,9 @@ class MCTSNode(ABC):
         self.nodes = self.children()
         return self.nodes
 
+    def best_child(self):
+        return max(self.node_children(), key=lambda node: node.total_reward / node.visits)
+
     @abstractmethod
     def children(self):
         pass
@@ -68,10 +71,7 @@ class MCTS:
 
         path.append(root)
         if root.is_terminal():
-            r = root.reward()
-            for idx, node in enumerate(path):
-                r_i = 0.5 if r == 0 else max(0, r * (-2 * (idx % 2) + 1))
-                node.add_reward(r_i)
+            MCTS.backup(path, root.reward())
             return
 
         root = root.expand()
@@ -82,8 +82,12 @@ class MCTS:
             while not node.is_terminal():
                 node = node.expand()
 
-            r = node.reward()
-            for idx, node in enumerate(path):
-                r_i = 0.5 if r == 0 else max(0, r * (-2 * (idx % 2) + 1))
-                node.add_reward(r_i)
+            MCTS.backup(path, node.reward())
  
+    @staticmethod
+    def backup(path, r):
+        for idx, node in enumerate(path):
+            r_i = 0.5 if r == 0 else max(0, r * (-2 * ((idx + 1) % 2) + 1))
+            node.add_reward(r_i)
+
+            

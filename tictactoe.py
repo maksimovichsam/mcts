@@ -175,8 +175,8 @@ if __name__ == "__main__":
     save_file = "ttt.pickle"
     TicTacToeNode.load(save_file)
 
-    computer = TicTacToePlayer.X
-    human = TicTacToePlayer.O
+    computer = TicTacToePlayer.O
+    human = TicTacToePlayer.X
 
     run = True
     def make_move(i, j):

@@ -85,9 +85,9 @@ if __name__ == "__main__":
     save_file = "ttt.pickle"
     root = TicTacToeNode.from_game(TicTacToe())
 
-    playouts = 10_000
+    playouts = 100_000
     for i in range(playouts):
-        MCTS.select(root, num_rollouts=1000)
+        MCTS.select(root, num_rollouts=1)
 
         if i % (playouts // 200) == 0:
             print(f"Game {i + 1:>8}, {i / playouts * 100:>5.1f}% complete")

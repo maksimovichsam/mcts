@@ -93,8 +93,11 @@ def minimax(root, player=0):
 
 
 if __name__ == "__main__":
-    tree_values = ([0] * 15) + [1,-1,1,1,1,-1,-1,-1,-1,-1,1,-1,1,1,-1,-1]
     levels = 5
+    tree_values = ([0] * (2**(levels - 1) - 1)) + \
+        [random.choice([-1, 1]) for i in range(2**levels - 1)]
+        # [1, 1, 1, -1] 
+        # [1,-1,1,1,1,-1,-1,-1,-1,-1,1,-1,1,1,-1,-1]
     separator = "-" * ((4 * 2**(levels - 1)) - 1)
     root = generate_tree(tree_values, levels)
 
@@ -108,10 +111,9 @@ if __name__ == "__main__":
         return val.rjust(5, "_")
 
     playouts = 100_000
+    node = root
     for i in range(playouts):
-        MCTS.select(root, num_rollouts=1)
-        # pretty_print_tree(root, levels, get_node_value)
-        continue
+        MCTS.select(node, num_rollouts=1)
 
     pretty_print_tree(root, levels, get_node_value)    
     print(separator)
@@ -119,7 +121,7 @@ if __name__ == "__main__":
     def get_mcts_direction(node):
         val = f"{'??'}"
         if node.visits > 0:
-            val = f"{node.total_reward / node.visits:4.2f}"
+            val = f"{node.visits:4.2f}"
         if node.left and node.right:
             if node.left.visits == 0 or node.right.visits == 0:
                 val = f"{'?'}"
@@ -138,4 +140,3 @@ if __name__ == "__main__":
     print(separator)
 
     
-            
