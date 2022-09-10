@@ -1,3 +1,4 @@
+from typing import List
 from abc import ABC, abstractmethod
 import math
 import random
