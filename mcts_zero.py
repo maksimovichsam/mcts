@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import ABC, abstractmethod, abstractstaticmethod
 import random
 import math
 import torch
@@ -70,11 +70,16 @@ class MCTSZeroNode(ABC):
 
     def search_policy(self, temperature: float=1.0) -> SearchPolicy:
         coldness = 1 / temperature
-        weights = torch.softmax(torch.tensor([num_visits**coldness for num_visits in self.visits]), dim=0)
+        weights = torch.tensor([num_visits**coldness for num_visits in self.visits])
+        weights /= torch.sum(weights)
         return SearchPolicy(weights)
 
     @abstractmethod
-    def state():
+    def reset(self):
+        pass
+
+    @abstractmethod
+    def state(self):
         pass
 
     @abstractmethod
@@ -96,35 +101,17 @@ class MCTSZero:
     def search(node: MCTSZeroNode, simulations:int=100, temperature:float=1.0) -> SearchPolicy:
         root: MCTSZeroNode = node
         for i in range(simulations):
-            # print("values ----------------------------------------")
-            # pretty_print_tree(root, 4, lambda node: '________?' if node.v is None else f'{node.v.item():>9.3f}')
-            # print("visits")
-            # pretty_print_tree(root, 4, lambda node: '___?' if node.parent is None or node.parent.visits is None else f'{node.parent.visits[(node.index + 1) % 2]:>4.0f}')
-            # print("q")
-            # pretty_print_tree(root, 4, lambda node: '________?' if node.parent is None or node.parent.q is None else f'{node.parent.q[(node.index + 1) % 2].item():>9.3f}')
-            # print("p")
-            # pretty_print_tree(root, 4, lambda node: '________?' if node.parent is None or node.parent.p is None else f'{MCTSZeroNode.c_puct * node.parent.p[(node.index + 1) % 2] * math.sqrt(sum(node.parent.visits)) / (1 + node.parent.visits[(node.index + 1) % 2]):>9.3f}')
-            # print("q + p")
-            # pretty_print_tree(root, 4, lambda node: '________?' if node.parent is None or node.parent.p is None else f'{node.parent.q[(node.index + 1) % 2].item() + MCTSZeroNode.c_puct * node.parent.p[(node.index + 1) % 2] * math.sqrt(sum(node.parent.visits)) / (1 + node.parent.visits[(node.index + 1) % 2]):>9.3f}')
-
             path: list[tuple[int, MCTSZeroNode]] = []
             while not node.is_leaf() and not node.is_terminal():
                 action, new_node = node.select()
                 path.append((action, node))
                 node = new_node
-
-                
+           
             v = node.expand() if node.is_leaf() else node.reward()
-            assert v != 0
             for index, (action, parent) in enumerate(reversed(path)):
                 parent.backup(action, v * (-1)**(index % 2))
             
             node = root
-
-        # print("q")
-        # pretty_print_tree(root, 4, lambda node: '________?' if node.parent is None or node.parent.q is None else f'{node.parent.q[(node.index + 1) % 2].item():>9.3f}')
-        # print("visits")
-        # pretty_print_tree(root, 4, lambda node: '___?' if node.parent is None or node.parent.visits is None else f'{node.parent.visits[(node.index + 1) % 2]:>4.0f}')
 
         return root.search_policy(temperature=temperature)
 
@@ -135,12 +122,6 @@ class MCTSZero:
         while not node.is_terminal():
             path.append(node)
             policy = MCTSZero.search(node, **kwargs)
-
-            # pretty_print_tree(root, 4, lambda node: '________?' if node.v is None else f'{node.v.item():>9.3f}')
-            # pretty_print_tree(root, 4, lambda node: '___?' if node.parent is None or node.parent.visits is None else f'{node.parent.visits[(node.index + 1) % 2]:>4.0f}')
-            # pretty_print_tree(root, 4, lambda node: '________?' if node.parent is None or node.parent.q is None else f'{node.parent.q[(node.index + 1) % 2].item():>9.3f}')
-            # pretty_print_tree(root, 4, lambda node: '________?' if node.parent is None or node.parent.p is None else f'{MCTSZeroNode.c_puct * node.parent.p[(node.index + 1) % 2] * math.sqrt(sum(node.parent.visits)) / (1 + node.parent.visits[(node.index + 1) % 2]):>9.3f}')
-            # print(f"Policy: {policy.weights}, sum: {torch.sum(policy.weights)}")
 
             node = node.children()[policy.pick()]
             policies.append(policy)
@@ -153,26 +134,15 @@ class MCTSZero:
         
         mse_loss = nn.MSELoss()
         for episode_i in range(num_episodes):
+            root.reset()
             optimizer.zero_grad()
             root_copy = deepcopy(root)
             path, policies, r = MCTSZero.play(root_copy)
             assert len(path) == len(policies)
 
-            # print("values")
-            # pretty_print_tree(root_copy, 4, lambda node: '________?' if node.v is None else f'{node.v.item():>9.3f}')
-            # print("visits")
-            # pretty_print_tree(root_copy, 4, lambda node: '___?' if node.parent is None or node.parent.visits is None else f'{node.parent.visits[(node.index + 1) % 2]:>4.0f}')
-            # print("q")
-            # pretty_print_tree(root_copy, 4, lambda node: '________?' if node.parent is None or node.parent.q is None else f'{node.parent.q[(node.index + 1) % 2].item():>9.3f}')
-            # print("p")
-            # pretty_print_tree(root_copy, 4, lambda node: '________?' if node.parent is None or node.parent.p is None else f'{MCTSZeroNode.c_puct * node.parent.p[(node.index + 1) % 2] * math.sqrt(sum(node.parent.visits)) / (1 + node.parent.visits[(node.index + 1) % 2]):>9.3f}')
-            # print("q + p")
-            # pretty_print_tree(root_copy, 4, lambda node: '________?' if node.parent is None or node.parent.p is None else f'{node.parent.q[(node.index + 1) % 2].item() + MCTSZeroNode.c_puct * node.parent.p[(node.index + 1) % 2] * math.sqrt(sum(node.parent.visits)) / (1 + node.parent.visits[(node.index + 1) % 2]):>9.3f}')
+            rewards = [r * (-1)**(idx % 2) for idx in range(len(path))]
+            values = [node.v for node in reversed(path)]
 
-            rewards = [r * (1 - 2 * (idx % 2)) for idx in range(len(path))]
-            values = [node.v for node in path]
-
-            # i think v doesn't have graidents
             v = torch.stack(values)
             z = torch.tensor(rewards, dtype=torch.float).reshape((-1, 1))
 

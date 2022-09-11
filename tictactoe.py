@@ -1,3 +1,4 @@
+import random
 from typing import *
 from enum import Enum
 from abc import ABC, abstractmethod, abstractstaticmethod
@@ -72,7 +73,10 @@ class TicTacToe:
         return self.board[y][x]
 
     def game_over(self):
-        return self.spaces_left == 0 or self.winner() is not None
+        return self.is_tie() or self.winner() is not None
+
+    def is_tie(self):
+        return self.spaces_left == 0
 
     def winner(self):
         for i in range(self.board_size):
@@ -164,45 +168,3 @@ class TicTacToeViewer:
         p1 = (x, y, self.cell_width, self.cell_height)
         pygame.draw.arc(self.screen, WHITE, p1, 0, math.pi * 2, width=self.LINE_WIDTH)
 
-
-if __name__ == "__main__":
-    screen_size = 720
-
-    game = TicTacToe()
-    viewer = TicTacToeViewer(game, w=screen_size, h=screen_size)
-
-    from ttt_mcts import TicTacToeNode
-    save_file = "ttt.pickle"
-    TicTacToeNode.load(save_file)
-
-    computer = TicTacToePlayer.O
-    human = TicTacToePlayer.X
-
-    run = True
-    def make_move(i, j):
-        global run
-        game.move(i, j)
-        if game.game_over():
-            winner = game.winner()
-            if winner is not None:
-                print(f"Player {winner.name} won tic tac toe!")
-            else:
-                print(f"Tic-tac-toe ended in a tie")
-            run = False
-
-    while run:
-        if game.player == computer:
-            i, j = TicTacToeNode.pick_move(game)
-            make_move(i, j)
-
-        for event in pygame.event.get():
-            if event.type == pygame.MOUSEBUTTONDOWN:
-                if game.player != human:
-                    continue
-                x_m, y_m = pygame.mouse.get_pos()
-                i, j = viewer.get_board_coords(x_m, y_m)
-                make_move(i, j)
-
-        viewer.draw()
-    
-    print("Exiting")
