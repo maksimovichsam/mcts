@@ -1,9 +1,12 @@
-from abc import ABC, abstractmethod, abstractstaticmethod
+from abc import ABC, abstractmethod
+from copy import deepcopy
+from my_utils import Timer
+import datetime
 import random
 import math
+import time
 import torch
 import torch.nn as nn
-from binary_tree import pretty_print_tree
 
 class SearchPolicy:
     
@@ -128,39 +131,60 @@ class MCTSZero:
         return path, policies, node.reward()
 
     @staticmethod
-    def train_evaluator(root: MCTSZeroNode, evaluator, num_episodes=100):
-        from copy import deepcopy
+    def train_evaluator(root: MCTSZeroNode, evaluator, batch_size=256, iterations=10, num_episodes=100, **kwargs):
         optimizer = torch.optim.AdamW(evaluator.parameters(), lr=evaluator.hp.lr)
-        
+
+        timer = Timer()        
         mse_loss = nn.MSELoss()
-        for episode_i in range(num_episodes):
-            root.reset()
-            optimizer.zero_grad()
-            root_copy = deepcopy(root)
-            path, policies, r = MCTSZero.play(root_copy)
-            assert len(path) == len(policies)
+        num_batches = num_episodes // batch_size
 
-            rewards = [r * (-1)**(idx % 2) for idx in range(len(path))]
-            values = [node.v for node in reversed(path)]
+        for iteration in range(iterations):
+            timer.start("iteration")
 
-            v = torch.stack(values)
-            z = torch.tensor(rewards, dtype=torch.float).reshape((-1, 1))
+            losses = []
 
-            nll_loss = -1 * torch.sum(
-                torch.stack(tuple( 
-                    torch.dot(policies[i].weights, torch.log(path[i].p + 0.001)) 
-                        for i in range(len(path))
-                ))
-            )
+            for episode_i in range(num_episodes):
+                timer.start("episode")
 
-            loss = mse_loss(z, v) + nll_loss
-            loss.backward()
-            optimizer.step()
+                root.reset()
+                root_copy = deepcopy(root)
+                path, policies, r = MCTSZero.play(root_copy, **kwargs)
+                assert len(path) == len(policies)
 
-            if episode_i % 10 == 0:
-                print(f"Loss: {loss.item():>10.4f}  [Episode {episode_i:>5d}/{num_episodes:>5d}]")
+                rewards = [r * (-1)**(idx % 2) for idx in range(len(path))]
+                values = [node.v for node in reversed(path)]
 
-            
+                v = torch.stack(values)
+                z = torch.tensor(rewards, dtype=torch.float).reshape((-1, 1))
+
+                nll_loss = -1 * torch.sum(
+                    torch.stack(tuple( 
+                        torch.dot(policies[i].weights, torch.log(path[i].p + 0.001)) 
+                            for i in range(len(path))
+                    ))
+                )
+
+                loss = mse_loss(z, v) + nll_loss
+                losses.append(loss)
+
+                timer.stop("episode")
+                print(f"Episode [{episode_i:>5d}/{num_episodes}], took {timer.str('episode')}")
+
+            random.shuffle(losses)
+
+            for batch_number in range(0, len(losses), batch_size):
+                optimizer.zero_grad()
+                batch = torch.stack(losses[batch_number:batch_number+batch_size])
+                batch_loss = torch.sum(batch) / len(batch) 
+                batch_loss.backward()
+                optimizer.step()
+
+                if batch_number % 1 == 0:
+                    print(f"Loss: {batch_loss.item():>10.4f}  [Batch {batch_number // batch_size + 1:>5d}/{num_batches}]")
+
+            timer.end("iteration")
+            print(f"Iteration [{iteration:>5d}/{iterations}], took {timer.str('iteration')}")
+
 
 
 # def train_nn(self, train_data, test_data, loss_fn = nn.MSELoss()):

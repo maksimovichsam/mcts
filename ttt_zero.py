@@ -64,9 +64,10 @@ class TTTZeroNode(MCTSZeroNode):
             r = 0
         return r
 
+
 if __name__ == "__main__":
     root = TTTZeroNode.from_game(TicTacToe())
 
-    ttt_evaluator.load_from_file("ttt2.pth")
-    MCTSZero.train_evaluator(root, ttt_evaluator, 200)
-    ttt_evaluator.save_to_file("ttt2.pth")
+    # ttt_evaluator.load_from_file("ttt2.pth")
+    MCTSZero.train_evaluator(root, ttt_evaluator, batch_size=5, iterations=10, num_episodes=10, simulations=50)
+    ttt_evaluator.save_to_file("ttt.pth")
