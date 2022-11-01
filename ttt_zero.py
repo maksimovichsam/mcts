@@ -2,11 +2,12 @@ from mcts_zero import MCTSZeroNode, MCTSZero
 from my_utils.torch_utils import BasicNN
 from tictactoe import TicTacToe, TicTacToePlayer
 from copy import deepcopy
+import math
 import torch
 
 
 hp = BasicNN.HyperParameters()
-hp.lr = 0.001
+hp.lr = 0.1
 ttt_evaluator = BasicNN([27, 100, 100, 100, 100, 10], hp)
 
 class TTTZeroNode(MCTSZeroNode):
@@ -41,8 +42,10 @@ class TTTZeroNode(MCTSZeroNode):
                     
     def evaluate(self, state) -> tuple[list[float], float]:
         res = ttt_evaluator(state)
-        p, v = res[:9], res[9:]
-        return p[self.valid_actions], v
+        p, v = res[:9][self.valid_actions], res[9:]
+        p = torch.softmax(p, dim=0)
+        v = torch.arctan(v) / (math.pi / 2)
+        return p, v
 
     def children(self) -> list['MCTSZeroNode']:
         if self.game.game_over():
@@ -69,5 +72,5 @@ if __name__ == "__main__":
     root = TTTZeroNode.from_game(TicTacToe())
 
     # ttt_evaluator.load_from_file("ttt2.pth")
-    MCTSZero.train_evaluator(root, ttt_evaluator, batch_size=5, iterations=10, num_episodes=10, simulations=50)
+    MCTSZero.train_evaluator(root, ttt_evaluator, iterations=25, num_episodes=10, simulations=100)
     ttt_evaluator.save_to_file("ttt.pth")

@@ -138,7 +138,36 @@ class Timer:
         self.timer_map[name][Timer.END_KEY] = time.time()
         self.timer_map[name][Timer.RUNNING_KEY] = False
 
+    def elapsed(self, name=DEFAULT_NAME):
+        if self.timer_map[name][Timer.RUNNING_KEY]:
+            return time.time() - self.timer_map[name][Timer.START_KEY]
+        return self.timer_map[name][Timer.END_KEY] - self.timer_map[name][Timer.START_KEY]
+
     def str(self, name=DEFAULT_NAME):
-        hours, remainder = divmod(self.timer_map[name][Timer.END_KEY] - self.timer_map[name][Timer.START_KEY], 3600)
+        hours, remainder = divmod(self.elapsed(name), 3600)
         minutes, seconds = divmod(remainder, 60)
         return '{:02}:{:02}:{:02}'.format(int(hours), int(minutes), int(seconds))
+
+
+def progress(iteration, total_iterations, time_elapsed=None, percent_to_progress=0.05, time_to_progress=timedelta(minutes=5)):
+    """ Evaluates whether a progress bar has progressed enough to print
+        a notification. Returns true if the progress bar has progressed enough percent
+        or if enough time has elapsed
+        
+        Args:
+            iteration (int): the current iteration
+            total_iterations (int): the number of iterations that will be completed
+            time_elapsed (float): the amount of time that has elapsed since the last notification (seconds)
+            percent_to_progress (float): the minimum amount of progress needed to print a notification
+            time_to_progress (float): the minimum amount of time needed to print a notification
+    """
+    time_elapsed = timedelta(seconds=time_elapsed)
+    if time_elapsed >= time_to_progress:
+        return True
+
+    # progress implies the iteration is a multiple of floor(percent * total_iterations)
+    steps_per_progress = math.floor(percent_to_progress * total_iterations)
+    if steps_per_progress == 0 or iteration % steps_per_progress == 0:
+        return True
+
+    return False

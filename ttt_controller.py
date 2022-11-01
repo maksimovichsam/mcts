@@ -80,6 +80,7 @@ if __name__ == "__main__":
 
     player_map = {
         TicTacToePlayer.X:
+            # human_controller
             computer_controller
         ,
         TicTacToePlayer.O:
@@ -88,6 +89,7 @@ if __name__ == "__main__":
     }
 
     run = True
+    viewer.draw()
     while run:
         i, j = player_map[game.player].pick_move(game)
 

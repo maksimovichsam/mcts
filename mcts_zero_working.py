@@ -1,15 +1,9 @@
-from abc import ABC, abstractmethod
-from copy import deepcopy
-from unicodedata import name
-from my_utils import Timer
-import datetime
+from abc import ABC, abstractmethod, abstractstaticmethod
 import random
 import math
-import time
 import torch
 import torch.nn as nn
-
-from my_utils.utils import progress, unzip
+from binary_tree import pretty_print_tree
 
 class SearchPolicy:
     
@@ -61,6 +55,9 @@ class MCTSZeroNode(ABC):
 
     def expand(self) -> float:
         self.p, self.v = self.evaluate(self.state())
+        self.p = torch.softmax(self.p, dim=0)
+        self.v = torch.arctan(self.v) / (math.pi / 2)
+
         self.visits      = torch.zeros((len(self.p), ), dtype=torch.float)
         self.total_value = torch.zeros((len(self.p), ), dtype=torch.float)
         self.q           = torch.zeros((len(self.p), ), dtype=torch.float)
@@ -79,36 +76,22 @@ class MCTSZeroNode(ABC):
 
     @abstractmethod
     def reset(self):
-        """ A static method, deletes the search tree
-        """
         pass
 
     @abstractmethod
     def state(self):
-        """ Returns the tensor representation of this node
-        """
         pass
 
     @abstractmethod
     def evaluate(self, state) -> tuple[list[float], float]:
-        """ Computes tensors p, v for the given state
-            - p = normalized probabilities of legal moves
-            - v = value of the state
-        """
         pass
 
     @abstractmethod
     def children(self) -> list['MCTSZeroNode']:
-        """ Returns the sub states after taking one action from 
-            the given state
-        """
         pass
 
     @abstractmethod
     def reward(self) -> float:
-        """ Returns the game reward from the perspective of the player
-            which made the last move
-        """
         pass
 
 
@@ -145,73 +128,41 @@ class MCTSZero:
         return path, policies, node.reward()
 
     @staticmethod
-    def train_evaluator(root: MCTSZeroNode, evaluator, batch_size=256, iterations=10, num_episodes=100, **kwargs):
+    def train_evaluator(root: MCTSZeroNode, evaluator, num_episodes=100):
+        from copy import deepcopy
         optimizer = torch.optim.AdamW(evaluator.parameters(), lr=evaluator.hp.lr)
+        
+        losses = []
 
-        timer = Timer()        
         mse_loss = nn.MSELoss()
-        num_batches = num_episodes // batch_size
+        for episode_i in range(num_episodes):
+            root.reset()
+            optimizer.zero_grad()
+            root_copy = deepcopy(root)
+            path, policies, r = MCTSZero.play(root_copy)
+            assert len(path) == len(policies)
 
-        def compute_loss(path, policies, r):
-            # p, v = unzip(node.evaluate(node.state()) for node in path)
-            # rewards = [r * (-1)**(idx % 2) for idx in range(len(path) - 1, -1, -1)]
-            v = [node.v for node in reversed(path)]
             rewards = [r * (-1)**(idx % 2) for idx in range(len(path))]
+            values = [node.v for node in reversed(path)]
 
-            v = torch.stack(v)
+            v = torch.stack(values)
             z = torch.tensor(rewards, dtype=torch.float).reshape((-1, 1))
 
             nll_loss = -1 * torch.sum(
-                torch.stack(tuple(
+                torch.stack(tuple( 
                     torch.dot(policies[i].weights, torch.log(path[i].p + 0.001)) 
                         for i in range(len(path))
                 ))
             )
 
             loss = mse_loss(z, v) + nll_loss
-            return loss
+            loss.backward()
+            optimizer.step()
 
-        losses = []
+            if episode_i % 10 == 0:
+                print(f"Loss: {loss.item():>10.4f}  [Episode {episode_i:>5d}/{num_episodes:>5d}]")
 
-        timer.start("iteration")
-        for iteration in range(iterations):
-
-            examples = []
-
-            timer.start("episode")
-            optimizer.zero_grad()
-            for episode_i in range(num_episodes):
-                root.reset()
-                root_copy = deepcopy(root)
-                path, policies, r = MCTSZero.play(root_copy, **kwargs)
-                assert len(path) == len(policies)
-                examples.append((path, policies, r))
-
-                # if progress(episode_i, num_episodes, timer.elapsed("episode"), percent_to_progress=2):
-                #     print(f"Episode [{episode_i:>5d}/{num_episodes}], took {timer.str('episode')}")
-                #     timer.start("episode")
-
-            # random.shuffle(examples)
-
-            timer.start("batch")
-            for batch_number in range(0, len(examples), batch_size):
-
-                batch = examples[batch_number:batch_number+batch_size]
-                batch = torch.stack([compute_loss(path, pi, r) for path, pi, r in batch])
-                batch = torch.sum(batch) / batch.shape[0]
-                batch.backward()
-                optimizer.step()
-
-                # if progress(batch_number // batch_size, num_batches, timer.elapsed("batches")):
-                #     print(f"Loss: {batch.item():>10.4f}  [Batch {batch_number // batch_size + 1:>5d}/{num_batches}], took {timer.str('batch')}")
-                #     timer.start("batch")
-
-                losses.append(batch.item())
-
-            if progress(iteration, iterations, timer.elapsed("iteration")):
-                print(f"Iteration [{iteration:>5d}/{iterations}], took {timer.str('iteration')}")
-                print(f"Loss: {batch.item():>10.4f}  [Batch {batch_number // batch_size + 1:>5d}/{num_batches}], took {timer.str('batch')}")
-                timer.start("iteration")
+            losses.append(loss.item())
 
         from matplotlib import pyplot as plt
         plt.plot(list(range(len(losses))), losses)
