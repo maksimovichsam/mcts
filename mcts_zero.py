@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from copy import deepcopy
 from unicodedata import name
-from my_utils import Timer
+from smaksimovich import Timer
 import datetime
 import random
 import math
@@ -9,7 +9,7 @@ import time
 import torch
 import torch.nn as nn
 
-from my_utils.utils import progress, unzip
+from smaksimovich import progress, unzip
 
 class SearchPolicy:
     
@@ -148,7 +148,6 @@ class MCTSZero:
     def train_evaluator(root: MCTSZeroNode, evaluator, batch_size=256, iterations=10, num_episodes=100, **kwargs):
         optimizer = torch.optim.AdamW(evaluator.parameters(), lr=evaluator.hp.lr)
 
-        timer = Timer()        
         mse_loss = nn.MSELoss()
         num_batches = num_episodes // batch_size
 
@@ -173,12 +172,12 @@ class MCTSZero:
 
         losses = []
 
-        timer.start("iteration")
+        Timer.start("iteration")
         for iteration in range(iterations):
 
             examples = []
 
-            timer.start("episode")
+            Timer.start("episode")
             optimizer.zero_grad()
             for episode_i in range(num_episodes):
                 root.reset()
@@ -187,13 +186,13 @@ class MCTSZero:
                 assert len(path) == len(policies)
                 examples.append((path, policies, r))
 
-                # if progress(episode_i, num_episodes, timer.elapsed("episode"), percent_to_progress=2):
-                #     print(f"Episode [{episode_i:>5d}/{num_episodes}], took {timer.str('episode')}")
-                #     timer.start("episode")
+                # if progress(episode_i, num_episodes, Timer.elapsed("episode"), percent_to_progress=2):
+                #     print(f"Episode [{episode_i:>5d}/{num_episodes}], took {Timer.str('episode')}")
+                #     Timer.start("episode")
 
             # random.shuffle(examples)
 
-            timer.start("batch")
+            Timer.start("batch")
             for batch_number in range(0, len(examples), batch_size):
 
                 batch = examples[batch_number:batch_number+batch_size]
@@ -202,54 +201,17 @@ class MCTSZero:
                 batch.backward()
                 optimizer.step()
 
-                # if progress(batch_number // batch_size, num_batches, timer.elapsed("batches")):
-                #     print(f"Loss: {batch.item():>10.4f}  [Batch {batch_number // batch_size + 1:>5d}/{num_batches}], took {timer.str('batch')}")
-                #     timer.start("batch")
+                # if progress(batch_number // batch_size, num_batches, Timer.elapsed("batches")):
+                #     print(f"Loss: {batch.item():>10.4f}  [Batch {batch_number // batch_size + 1:>5d}/{num_batches}], took {Timer.str('batch')}")
+                #     Timer.start("batch")
 
                 losses.append(batch.item())
 
-            if progress(iteration, iterations, timer.elapsed("iteration")):
-                print(f"Iteration [{iteration:>5d}/{iterations}], took {timer.str('iteration')}")
-                print(f"Loss: {batch.item():>10.4f}  [Batch {batch_number // batch_size + 1:>5d}/{num_batches}], took {timer.str('batch')}")
-                timer.start("iteration")
+            if progress(iteration, iterations, Timer.elapsed("iteration")):
+                print(f"Iteration [{iteration:>5d}/{iterations}], took {Timer.str('iteration')}")
+                print(f"Loss: {batch.item():>10.4f}  [Batch {batch_number // batch_size + 1:>5d}/{num_batches}], took {Timer.str('batch')}")
+                Timer.start("iteration")
 
         from matplotlib import pyplot as plt
         plt.plot(list(range(len(losses))), losses)
         plt.show()
-
-
-# def train_nn(self, train_data, test_data, loss_fn = nn.MSELoss()):
-#     """ Trains the model on training data
-#         Arguments:
-#             train_data [SimpleDataset]: train dataset from DatasetLoader
-#             test_data  [SimpleDataset]: test dataset from DatasetLoader
-#         Returns:
-#             List[float]: a list of training losses from every epoch
-#             List[float]: a list of test accuracy from every epoch
-#     """
-#     print(f"Training BasicNN on {len(train_data)} instances")
-#     metrics_str = lambda: "(" + ', '.join(f"{100 * metric:.2f}" for metric in evaluation_metrics[-1]) + ")"
-#     optimizer = torch.optim.AdamW(self.parameters(), lr=self.hp.lr)
-#     dataloader = DataLoader(train_data, batch_size=self.hp.batch_size, shuffle=True)
-#     loss_plot = []
-#     evaluation_metrics = [self.evaluation_metrics(test_data)]
-#     print(f"Starting with loss = {metrics_str()} on test data")
-
-#     for epoch in range(1, self.hp.epochs + 1):
-#         for batch, (X, y) in enumerate(dataloader):
-#             optimizer.zero_grad()
-#             loss = loss_fn(self.forward(X), y)
-#             loss.backward()
-#             optimizer.step()
-
-            # if batch % 10 == 0:
-            #     print(f"Loss: {loss.item():.4f}  [Batch {batch:>5d}/{(len(train_data) // self.hp.batch_size):>5d}]")
-
-#         loss_plot.append(loss.item())
-#         evaluation_metrics.append(self.evaluation_metrics(test_data))
-
-#         if (epoch - 1) % 1 == 0:
-#             print(f"Epoch {epoch}/{self.hp.epochs}")
-#             print(f"(accuracy, precision, recall, f1) = {metrics_str()} on test data")
-
-#     return loss_plot, evaluation_metrics

@@ -36,8 +36,7 @@ class MCTSPlayer(TTTController):
 import torch
 import random
 import math
-from my_utils.torch_utils import BasicNN
-
+from smaksimovich.torch_utils import BasicNN
 
 class MCTSZeroPlayer:
 

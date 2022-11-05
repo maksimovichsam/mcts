@@ -1,7 +1,7 @@
 import torch
 from torch import nn
-from my_utils import torch_utils
-from my_utils.utils import Timer
+from smaksimovich import torch_utils
+from smaksimovich import Timer
 
 from matplotlib import pyplot as plt
 

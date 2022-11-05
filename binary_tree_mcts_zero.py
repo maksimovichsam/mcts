@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from mcts_zero import MCTSZero, MCTSZeroNode
 from matplotlib import pyplot as plt
-from my_utils.torch_utils import BasicNN, SimpleDataset
+from smaksimovich.torch_utils import BasicNN, SimpleDataset
 from binary_tree import level_traversal, minimax, pretty_print_tree
 
 hp = BasicNN.HyperParameters()

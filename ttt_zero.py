@@ -1,5 +1,5 @@
 from mcts_zero import MCTSZeroNode, MCTSZero
-from my_utils.torch_utils import BasicNN
+from smaksimovich.torch_utils import BasicNN
 from tictactoe import TicTacToe, TicTacToePlayer
 from copy import deepcopy
 import math
