@@ -6,12 +6,9 @@ import math
 import torch
 
 
-hp = BasicNN.HyperParameters()
-hp.lr = 0.1
-ttt_evaluator = BasicNN([27, 100, 100, 100, 100, 10], hp)
-
 class TTTZeroNode(MCTSZeroNode):
     node_map = {}
+    evaluator: BasicNN = None
 
     @staticmethod
     def from_game(game: TicTacToe):
@@ -20,6 +17,7 @@ class TTTZeroNode(MCTSZeroNode):
         return TTTZeroNode.node_map[game]
 
     def reset(self):
+        super().reset()
         TTTZeroNode.node_map = {}
 
     def __init__(self, game: TicTacToe):
@@ -41,7 +39,7 @@ class TTTZeroNode(MCTSZeroNode):
         return self.state_tensor
                     
     def evaluate(self, state) -> tuple[list[float], float]:
-        res = ttt_evaluator(state)
+        res = self.evaluator(state)
         p, v = res[:9][self.valid_actions], res[9:]
         p = torch.softmax(p, dim=0)
         v = torch.arctan(v) / (math.pi / 2)
@@ -69,8 +67,21 @@ class TTTZeroNode(MCTSZeroNode):
 
 
 if __name__ == "__main__":
-    root = TTTZeroNode.from_game(TicTacToe())
+    import os.path
 
-    # ttt_evaluator.load_from_file("ttt2.pth")
-    MCTSZero.train_evaluator(root, ttt_evaluator, iterations=25, num_episodes=10, simulations=100)
-    ttt_evaluator.save_to_file("ttt.pth")
+    hp = BasicNN.HyperParameters()
+    hp.lr = 0.01
+    ttt_evaluator = BasicNN([27, 100, 100, 100, 100, 10], hp)
+    TTTZeroNode.evaluator = ttt_evaluator
+
+    # ttt_evaluator.load_from_file("ttt3.pth")
+    root = TTTZeroNode.from_game(TicTacToe())
+    MCTSZero.train_evaluator(root, ttt_evaluator, iterations=400, simulations=100)
+
+    i = 0
+    while os.path.exists(f"ttt{i}.pth"):
+        i += 1
+
+    ttt_evaluator.save_to_file(f"ttt{i}.pth")
+
+

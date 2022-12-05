@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
 from copy import deepcopy
-from unicodedata import name
 from smaksimovich import Timer
 import datetime
 import random
@@ -22,15 +21,12 @@ class SearchPolicy:
 
 
 class MCTSZeroNode(ABC):
-    c_puct = 4
+    c_puct = 2
+    noise_scale = 0.10
     
     def __init__(self):
         self.nodes = None
-        self.visits = None
-        self.total_value = None
-        self.p = None
-        self.q = None
-        self.v = None
+        self.reset()
 
     def node_children(self) -> list['MCTSZeroNode']:
         if self.nodes is not None:
@@ -45,19 +41,9 @@ class MCTSZeroNode(ABC):
         return self.visits is None
 
     def select(self) -> tuple[int, 'MCTSZeroNode']:
-        total_visits = sum(self.visits)
-        puct = lambda i: MCTSZeroNode.c_puct * self.p[i] * math.sqrt(total_visits) / (1 + self.visits[i])
-        
-        children = self.node_children()
-        best_index = 0
-        best_value = self.q[0] + puct(0)
-        for i in range(1, len(children)):
-            value = self.q[i] + puct(i)
-
-            if value > best_value:
-                best_value = value
-                best_index = i
-        return best_index, children[best_index]
+        selection = self.q + MCTSZeroNode.c_puct * self.p * math.sqrt(self.total_visits + 0.01) / (1 + self.visits)
+        action = torch.argmax(selection, dim=0)
+        return action, self.node_children()[action]
 
     def expand(self) -> float:
         self.p, self.v = self.evaluate(self.state())
@@ -69,9 +55,10 @@ class MCTSZeroNode(ABC):
     def backup(self, child_index: int, value: float) -> None:
         self.total_value[child_index:child_index+1] += value
         self.visits[child_index:child_index+1] += 1
+        self.total_visits += 1
         self.q[child_index:child_index+1] = self.total_value[child_index] / self.visits[child_index]
 
-    def search_policy(self, temperature: float=1.0) -> SearchPolicy:
+    def search_policy(self, temperature: float=1) -> SearchPolicy:
         coldness = 1 / temperature
         weights = torch.tensor([num_visits**coldness for num_visits in self.visits])
         weights /= torch.sum(weights)
@@ -79,9 +66,13 @@ class MCTSZeroNode(ABC):
 
     @abstractmethod
     def reset(self):
-        """ A static method, deletes the search tree
-        """
-        pass
+        """ A deletes the search tree and resets nodes statistics"""
+        self.visits = None
+        self.total_visits = 0
+        self.total_value = None
+        self.p = None
+        self.q = None
+        self.v = None
 
     @abstractmethod
     def state(self):
@@ -115,7 +106,7 @@ class MCTSZeroNode(ABC):
 class MCTSZero:
 
     @staticmethod
-    def search(node: MCTSZeroNode, simulations:int=100, temperature:float=1.0) -> SearchPolicy:
+    def search(node: MCTSZeroNode, simulations:int=100, temperature:float=1) -> SearchPolicy:
         root: MCTSZeroNode = node
         for i in range(simulations):
             path: list[tuple[int, MCTSZeroNode]] = []
@@ -124,7 +115,7 @@ class MCTSZero:
                 path.append((action, node))
                 node = new_node
            
-            v = node.expand() if node.is_leaf() else node.reward()
+            v = node.reward() if node.is_terminal() else node.expand()
             for index, (action, parent) in enumerate(reversed(path)):
                 parent.backup(action, v * (-1)**(index % 2))
             
@@ -145,73 +136,40 @@ class MCTSZero:
         return path, policies, node.reward()
 
     @staticmethod
-    def train_evaluator(root: MCTSZeroNode, evaluator, batch_size=256, iterations=10, num_episodes=100, **kwargs):
+    def train_evaluator(root: MCTSZeroNode, evaluator, num_episodes=50, iterations=10, **kwargs):
         optimizer = torch.optim.AdamW(evaluator.parameters(), lr=evaluator.hp.lr)
+        mse_loss = nn.MSELoss(reduction='sum')
 
-        mse_loss = nn.MSELoss()
-        num_batches = num_episodes // batch_size
-
-        def compute_loss(path, policies, r):
-            # p, v = unzip(node.evaluate(node.state()) for node in path)
-            # rewards = [r * (-1)**(idx % 2) for idx in range(len(path) - 1, -1, -1)]
-            v = [node.v for node in reversed(path)]
-            rewards = [r * (-1)**(idx % 2) for idx in range(len(path))]
-
-            v = torch.stack(v)
-            z = torch.tensor(rewards, dtype=torch.float).reshape((-1, 1))
-
-            nll_loss = -1 * torch.sum(
-                torch.stack(tuple(
-                    torch.dot(policies[i].weights, torch.log(path[i].p + 0.001)) 
-                        for i in range(len(path))
-                ))
-            )
-
-            loss = mse_loss(z, v) + nll_loss
-            return loss
-
-        losses = []
-
-        Timer.start("iteration")
         for iteration in range(iterations):
+            Timer.start("iteration")
 
-            examples = []
-
-            Timer.start("episode")
             optimizer.zero_grad()
-            for episode_i in range(num_episodes):
-                root.reset()
-                root_copy = deepcopy(root)
-                path, policies, r = MCTSZero.play(root_copy, **kwargs)
+            loss = torch.tensor([0.0])
+            for episodes in range(num_episodes):
+                path, policies, r = MCTSZero.play(root, **kwargs)
                 assert len(path) == len(policies)
-                examples.append((path, policies, r))
 
-                # if progress(episode_i, num_episodes, Timer.elapsed("episode"), percent_to_progress=2):
-                #     print(f"Episode [{episode_i:>5d}/{num_episodes}], took {Timer.str('episode')}")
-                #     Timer.start("episode")
+                rewards = [r * (-1)**(idx % 2) for idx in range(len(path))]
+                values = [node.v for node in reversed(path)]
 
-            # random.shuffle(examples)
+                v = torch.stack(values)
+                z = torch.tensor(rewards, dtype=torch.float).reshape((-1, 1))
 
-            Timer.start("batch")
-            for batch_number in range(0, len(examples), batch_size):
+                nll_loss = torch.sum(
+                    torch.stack(tuple( 
+                        torch.dot(policies[i].weights, torch.log(path[i].p + 0.001)) 
+                            for i in range(len(path))
+                    ))
+                )
 
-                batch = examples[batch_number:batch_number+batch_size]
-                batch = torch.stack([compute_loss(path, pi, r) for path, pi, r in batch])
-                batch = torch.sum(batch) / batch.shape[0]
-                batch.backward()
-                optimizer.step()
+                loss += mse_loss(z, v) - nll_loss
+                root.reset()
 
-                # if progress(batch_number // batch_size, num_batches, Timer.elapsed("batches")):
-                #     print(f"Loss: {batch.item():>10.4f}  [Batch {batch_number // batch_size + 1:>5d}/{num_batches}], took {Timer.str('batch')}")
-                #     Timer.start("batch")
+            loss /= num_episodes
+            loss.backward()
+            optimizer.step()
 
-                losses.append(batch.item())
-
-            if progress(iteration, iterations, Timer.elapsed("iteration")):
-                print(f"Iteration [{iteration:>5d}/{iterations}], took {Timer.str('iteration')}")
-                print(f"Loss: {batch.item():>10.4f}  [Batch {batch_number // batch_size + 1:>5d}/{num_batches}], took {Timer.str('batch')}")
-                Timer.start("iteration")
-
-        from matplotlib import pyplot as plt
-        plt.plot(list(range(len(losses))), losses)
-        plt.show()
+            print(f"Loss: {loss.item():>10.4f}")
+            print(f"Iteration [{iteration:>5d}/{iterations}], took {Timer.str('iteration')}")
+            if loss.item() < 0.05:
+                break
