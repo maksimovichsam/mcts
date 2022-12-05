@@ -22,17 +22,6 @@ class HumanController(TTTController):
                     return self.viewer.get_board_coords(x_m, y_m)
 
 
-from ttt_mcts import TicTacToeNode
-
-class MCTSPlayer(TTTController):
-
-    def __init__(self):
-        save_file = "ttt.pickle"
-        TicTacToeNode.load(save_file)
-
-    def pick_move(self, game: TicTacToe):
-        return TicTacToeNode.pick_move(game)
-
 import torch
 import random
 import math
