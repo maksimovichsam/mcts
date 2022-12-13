@@ -18,7 +18,7 @@ class TTTZeroNode(MCTSZeroNode):
 
     def reset(self):
         super().reset()
-        TTTZeroNode.node_map = {}
+        TTTZeroNode.node_map.clear()
 
     def __init__(self, game: TicTacToe):
         super().__init__()
@@ -70,13 +70,24 @@ if __name__ == "__main__":
     import os.path
 
     hp = BasicNN.HyperParameters()
-    hp.lr = 0.01
+    hp.lr = 0.001
+    hp.batch_size = 64
+    # hp.weight_decay = 10e-4
+    print(f"Hyperparameters:\n{hp}")
+
     ttt_evaluator = BasicNN([27, 100, 100, 100, 100, 10], hp)
     TTTZeroNode.evaluator = ttt_evaluator
 
-    # ttt_evaluator.load_from_file("ttt3.pth")
+    # ttt_evaluator.load_from_file("ttt4.pth")
     root = TTTZeroNode.from_game(TicTacToe())
-    MCTSZero.train_evaluator(root, ttt_evaluator, iterations=400, simulations=100)
+    MCTSZero.train_evaluator(root, ttt_evaluator
+        , iterations=300
+        , simulations=25
+        , num_episodes=100
+        , num_epochs=10
+        , buffer_size=2000
+        , batch_size=hp.batch_size
+        )
 
     i = 0
     while os.path.exists(f"ttt{i}.pth"):

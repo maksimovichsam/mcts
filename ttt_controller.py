@@ -64,7 +64,7 @@ if __name__ == "__main__":
     viewer = TicTacToeViewer(game, w=screen_size, h=screen_size)
 
     human_controller = HumanController(viewer)
-    computer_controller = MCTSZeroPlayer("./ttt2.pth")
+    computer_controller = MCTSZeroPlayer("./ttt1.pth")
 
     player_map = {
         TicTacToePlayer.X:

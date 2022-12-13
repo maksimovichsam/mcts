@@ -55,7 +55,7 @@ class FunctionOptimizer(nn.Module):
         return losses
 
 
-expo_kernel_p = torch.randn((2, ))
+expo_kernel_p = torch.randn((3, ))
 def expo_kernel(x_i, x_j, p=expo_kernel_p):
     assert len(x_i.shape) == 3, f"Expected (N, N, D) matrices, got {x_i.shape}"
     delta = torch.sum(x_i - x_j, axis=-1)**2
@@ -91,13 +91,14 @@ class GaussianProcess:
         x_i = torch.tile(X.reshape((1, N, D)), (N, 1, 1))
         x_j = torch.tile(X.reshape((N, 1, D)), (1, N, 1))
         def p_y_given_X(p):
-            self.K = self.kernel(x_i, x_j, p) + self.noise**2 * torch.eye(N)
+            self.K = self.kernel(x_i, x_j, p) + expo_kernel_p[2]**2 * torch.eye(N)
             self.L = torch.linalg.cholesky(self.K)
             self.alpha = torch.linalg.solve(self.L.T, torch.linalg.solve(self.L, self.y - self.mu))
             return -1 * (-0.5 * torch.matmul(y.T, self.alpha) - torch.trace(self.L) - constant)
 
         fo = FunctionOptimizer(p_y_given_X, expo_kernel_p)
         losses = fo.optimize(lr=0.1, retain_graph=True)
+        print(expo_kernel_p)
         plt.plot(list(range(len(losses))), losses)
         plt.show()
 
@@ -150,9 +151,9 @@ if __name__ == "__main__":
 
     X = torch_utils.uniform((N, 1), lo, hi).requires_grad_(True)
     y = f_objective(X)
-    y += torch_utils.uniform(y.shape, lo=-1, hi=1)
+    y += torch_utils.uniform(y.shape, lo=-5, hi=5)
 
-    gp = GaussianProcess(noise=1)
+    gp = GaussianProcess()
     gp.fit(X, y)
 
     X_test = torch.arange(lo - test_bound, hi + test_bound, (hi - lo + test_bound * 2) / N_test).reshape((N_test, 1))

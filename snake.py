@@ -197,11 +197,13 @@ if __name__ == "__main__":
     import time
 
     sleep_time = 0.075
-    players = [SnakePlayer.build_snake(8, 8, Direction.LEFT),
-               SnakePlayer.build_snake(12, 12, Direction.RIGHT)]
+    players = [
+        SnakePlayer.build_snake(8, 8, Direction.LEFT)
+        # , SnakePlayer.build_snake(12, 12, Direction.RIGHT)
+    ]
     controllers = [
-        HumanController(players[0], keyset=HumanController.ARROWS),
-        HumanController(players[1], keyset=HumanController.WASD)
+        HumanController(players[0], keyset=HumanController.ARROWS)
+        #, HumanController(players[1], keyset=HumanController.WASD)
     ]
     board = SnakeBoard(players)
     viewer = SnakeViewer(board)
