@@ -73,15 +73,18 @@ class TicTacToe:
         return self.board[y][x]
 
     def game_over(self):
-        return self.is_tie() or self.winner() is not None
+        w = self.winner()
+        return w is not None or (w is None and self.spaces_left == 0)
 
     def is_tie(self):
-        return self.spaces_left == 0
+        return self.winner() is None and self.spaces_left == 0
 
     def winner(self):
         for i in range(self.board_size):
             for j in range(self.board_size):
                 player = self.get(i, j)
+                if player is None:
+                    continue
 
                 for pattern in self.patterns:
                     pattern_has_winner = True

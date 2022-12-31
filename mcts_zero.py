@@ -19,7 +19,7 @@ class SearchPolicy:
 
 
 class MCTSZeroNode(ABC):
-    c_puct = 1
+    c_puct = 2
     noise_scale = 0.10
     
     def __init__(self):
@@ -38,8 +38,9 @@ class MCTSZeroNode(ABC):
         return self.visits is None
 
     def select(self, noise=3, epsilon=0.25) -> tuple[int, 'MCTSZeroNode']:
-        noise = Dirichlet(noise * torch.ones((len(self.visits), ))).sample()
-        selection = self.q + MCTSZeroNode.c_puct * ((1 - epsilon) * self.p + epsilon * noise) * math.sqrt(self.total_visits + 0.01) / (1 + self.visits)
+        # noise = Dirichlet(noise * torch.ones((len(self.visits), ))).sample()
+        # selection = self.q + MCTSZeroNode.c_puct * ((1 - epsilon) * self.p + epsilon * noise) * math.sqrt(self.total_visits + 0.01) / (1 + self.visits)
+        selection = self.q + MCTSZeroNode.c_puct * self.p * math.sqrt(self.total_visits + 0.01) / (1 + self.visits)
         action = torch.argmax(selection, dim=0)
         return action, self.node_children()[action]
 
@@ -57,10 +58,12 @@ class MCTSZeroNode(ABC):
         self.q[child_index:child_index+1] = self.total_value[child_index] / self.visits[child_index]
 
     def search_policy(self, temperature: float=1) -> SearchPolicy:
-        coldness = 1 / temperature
-        # TODO : try doing self.visits**coldness instead of creating new tensor
-        weights = torch.tensor([num_visits**coldness for num_visits in self.visits])
-        weights /= torch.sum(weights)
+        if temperature == 0:
+            weights = torch.zeros_like(self.visits)
+            weights[torch.argmax(self.visits, dim=0)] = 1
+        else:
+            weights = torch.pow(self.visits, 1 / temperature)
+            weights /= torch.sum(weights)
         return SearchPolicy(weights)
 
     @abstractmethod
@@ -115,7 +118,7 @@ class MCTSZero:
                 path.append((action, node))
                 node = new_node
            
-            v = node.reward() if node.is_terminal() else node.expand()
+            v = node.reward() if node.is_terminal() else -node.expand()
             for index, (action, parent) in enumerate(reversed(path)):
                 parent.backup(action, v * (-1)**(index % 2))
             
@@ -125,34 +128,48 @@ class MCTSZero:
 
     @staticmethod
     def play(node: MCTSZeroNode, **kwargs) -> tuple[list[MCTSZeroNode], list[SearchPolicy]]:
-        path = []
-        policies: list[SearchPolicy] = []
+        examples = []
+        actions = []
+        from tictactoe import TicTacToePlayer
+        node.game.board[0][1] = TicTacToePlayer.O
+        # node.game.board[0][0] = 
+        node.game.board[1][1] = TicTacToePlayer.X
+        # node.game.board[2][-1] = TicTacToePlayer.X
+        # node.game.player = TicTacToePlayer.O
+
         while not node.is_terminal():
-            path.append(node)
+            examples.append([node, None, None])
             policy = MCTSZero.search(node, **kwargs)
 
-            node = node.children()[policy.pick()]
-            policies.append(policy)
-        return path, policies, node.reward()
+            action = policy.pick()
+            actions.append(action)
+            node = node.node_children()[action]
+            examples[-1][1] = policy
+        r = node.reward()
+        for idx, example in enumerate(reversed(examples)):
+            example[2] = (-1)**(idx % 2) * r
+        return examples
 
     @staticmethod
     def train_evaluator(root: MCTSZeroNode, evaluator, 
-            num_epochs=5, num_episodes=1, iterations=10, batch_size=256, buffer_size=512, **kwargs):
-        from matplotlib import pyplot as plt
-
+            num_epochs=5, num_episodes=1, iterations=10, batch_size=256, 
+            buffer_size=512, c_puct=4, stop_loss=0, **kwargs):
+        MCTSZeroNode.c_puct = c_puct
         optimizer = torch.optim.AdamW(evaluator.parameters(), lr=evaluator.hp.lr,
             weight_decay=evaluator.hp.weight_decay)
         mse_loss = nn.MSELoss(reduction='sum')
 
         game_buffer = deque(maxlen=buffer_size)
+        stop = False
 
         for iteration in range(iterations):
+            if stop:
+                break
             Timer.start("iteration")
 
             for episodes in range(num_episodes):
-                path, policies, r = MCTSZero.play(root, **kwargs)
-                assert len(path) == len(policies)
-                game_buffer.append((path, policies, r))
+                examples = MCTSZero.play(root, **kwargs)
+                game_buffer.extend(examples)
                 root.reset()
 
             random.shuffle(game_buffer)
@@ -162,35 +179,31 @@ class MCTSZero:
                 for batch_number in range(num_batches):
                     optimizer.zero_grad()
                     loss = torch.tensor([0.0])
+                    
+                    losses = []
 
                     batch_start = batch_number * batch_size
                     batch_end = min(batch_start + batch_size, len(game_buffer))
                     for i in range(batch_start, batch_end):
-                        path, policies, r = game_buffer[i]
-                        path = [node.evaluate(node.state()) for node in path]
-                        rewards = [r * (-1)**(idx % 2) for idx in range(len(path))]
-                        values = [node[1] for node in reversed(path)]
-
-                        v = torch.stack(values)
-                        z = torch.tensor(rewards, dtype=torch.float).reshape((-1, 1))
+                        node, policy, r = game_buffer[i]
+                        p, v = node.evaluate(node.state())
 
                         nll_loss = torch.sum(
-                            torch.stack(tuple( 
-                                torch.dot(policies[i].weights, torch.log(path[i][0] + 0.001)) 
-                                - torch.dot(policies[i].weights, torch.log(policies[i].weights + 0.001)) 
-                                    for i in range(len(path))
-                            ))
+                            torch.dot(policy.weights, torch.log(p + 0.001)) 
+                            - torch.dot(policy.weights, torch.log(policy.weights + 0.001)) 
                         )
 
-                        loss += mse_loss(z, v) - nll_loss
+                        loss += (r - v)**2 - nll_loss
+                        losses.append((r - v)**2 - nll_loss)
 
                     loss /= (batch_end - batch_start)
                     loss.backward()
                     optimizer.step()
 
-                    print(f"Loss: {loss.item():>10.4f} Batch [{batch_number:>8.0f}/{num_batches:>8.0f}]")
-                    if loss.item() < 0.05:
-                        break
+                    if loss.item() < stop_loss:
+                        stop = True
+
+                    print(f"Loss: {loss.item():>10.4f} Iteration [{iteration:>5.0f}/{iterations:>5.0f}] Batch [{batch_number:>8.0f}/{num_batches:>8.0f}]")
 
             print(f"Iteration [{iteration:>5d}/{iterations}], took {Timer.str('iteration')}")
 

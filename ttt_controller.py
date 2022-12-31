@@ -51,8 +51,8 @@ class MCTSZeroPlayer:
         print(f"TTTZero value: {v.item():5>.4f}")
         print('\n'.join([' '.join([f"{x:>3.2f}" for x in row]) for row in board_p]))
         
-        action = random.choices(population=valid_actions, weights=p[valid_actions], k=1)[0]
-        print(f"Chose action {action} = {action % 3, action // 3}")
+        action = valid_actions[torch.argmax(p[valid_actions]).item()] # random.choices(population=valid_actions, weights=p[valid_actions], k=1)[0]
+        print(f"Chose action with highest p {action} = {action % 3, action // 3}")
         return action % 3, action // 3 # x, y
 
 
@@ -64,7 +64,7 @@ if __name__ == "__main__":
     viewer = TicTacToeViewer(game, w=screen_size, h=screen_size)
 
     human_controller = HumanController(viewer)
-    computer_controller = MCTSZeroPlayer("./ttt1.pth")
+    computer_controller = MCTSZeroPlayer("./ttt10.pth")
 
     player_map = {
         TicTacToePlayer.X:

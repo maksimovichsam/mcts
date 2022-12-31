@@ -68,25 +68,41 @@ class TTTZeroNode(MCTSZeroNode):
 
 if __name__ == "__main__":
     import os.path
+    import torch
+    import random
 
     hp = BasicNN.HyperParameters()
-    hp.lr = 0.001
+    hp.lr = 0.0001
+    hp.iterations = 50
+    hp.simulations = 1000
+    hp.num_episodes = 20
+    hp.num_epochs = 10
+    hp.buffer_size = 64 * 10
     hp.batch_size = 64
-    # hp.weight_decay = 10e-4
-    print(f"Hyperparameters:\n{hp}")
+    hp.temperature = 1
+    hp.c_puct = 4
+    hp.stop_loss = 0.001
+    hp.weight_decay = 10e-4
+    torch.manual_seed(0)
+    random.seed(0)
+    hp_string = '\n'.join(f"{k}: {v}" for k, v in hp.__dict__.items())
+    print(f"Hyperparameters:\n{hp_string}")
 
     ttt_evaluator = BasicNN([27, 100, 100, 100, 100, 10], hp)
     TTTZeroNode.evaluator = ttt_evaluator
 
-    # ttt_evaluator.load_from_file("ttt4.pth")
+    ttt_evaluator.load_from_file("ttt9.pth")
     root = TTTZeroNode.from_game(TicTacToe())
     MCTSZero.train_evaluator(root, ttt_evaluator
-        , iterations=300
-        , simulations=25
-        , num_episodes=100
-        , num_epochs=10
-        , buffer_size=2000
+        , iterations=hp.iterations
+        , simulations=hp.simulations
+        , num_episodes=hp.num_episodes
+        , num_epochs=hp.num_epochs
+        , buffer_size=hp.buffer_size
         , batch_size=hp.batch_size
+        , temperature=hp.temperature
+        , c_puct=hp.c_puct
+        , stop_loss=hp.stop_loss
         )
 
     i = 0
