@@ -46,3 +46,49 @@ def minimax(root, player=0):
         root.direction = 'R'
 
     return root.val
+
+
+def minimax_dataset(node, player, dataset):
+    if node.is_terminal():
+        return node.reward()
+
+    r = []
+    for child in node.children():
+        r.append(minimax_dataset(child, player.next(), dataset))
+
+    # normalized rewards == action probabilities
+    total = sum(r)
+    a = [1 / len(node.children()) for _ in node.children()] \
+        if total == 0 else [r_i / total for r_i in r]
+    dataset.append((node.state(), a))
+
+    if player.is_first():
+        return max(r)
+    else:
+        return min(r)
+
+
+if __name__ == "__main__":
+    # Create a tic tac optimal dataset
+    # X = game state
+    # Y = probability distribution of which move to make
+
+    from ttt_zero import TTTZeroNode
+    from tictactoe import TicTacToePlayer, TicTacToe
+    from smaksimovich import unzip
+
+    dataset = []
+    root = TTTZeroNode.from_game(TicTacToe())
+    player = TicTacToePlayer.X
+    minimax_dataset(root, player, dataset)
+    X, Y = unzip(dataset)
+    assert len(X) == len(Y), f"len(X) = {len(X)}, len(Y) = {len(Y)}"
+
+    res = []
+    for idx in range(len(X)):
+        x_i, y_i = X[idx], Y[idx]
+        res.append(x_i.reshape((-1,)).tolist() + y_i)
+
+    with open("tictactoe_solved.csv", "w") as file:
+        for line in res:
+            file.write(','.join(list(map(str, line))) + '\n')

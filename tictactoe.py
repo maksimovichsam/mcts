@@ -12,6 +12,11 @@ class TicTacToePlayer(Enum):
     X = 0
     O = 1
 
+    def is_first(self):
+        return self == TicTacToePlayer.X
+    
+    def next(self):
+        return TicTacToePlayer.O if self.is_first() else TicTacToePlayer.X
 
 class TicTacToeWinPattern:
     def __init__(self, win_size=3):
