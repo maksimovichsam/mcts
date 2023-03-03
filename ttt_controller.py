@@ -43,6 +43,7 @@ class MCTSZeroPlayer:
                 if game.board[j][i] is None:
                     valid_actions.append(j * 3 + i)
         state = state.reshape((-1, ))
+        print(state)
         res = self.ttt_evaluator(state)
         p, v = res[:9], res[9:]
         v = torch.arctan(v) / (math.pi / 2)
@@ -64,16 +65,16 @@ if __name__ == "__main__":
     viewer = TicTacToeViewer(game, w=screen_size, h=screen_size)
 
     human_controller = HumanController(viewer)
-    computer_controller = MCTSZeroPlayer("./ttt10.pth")
+    computer_controller = MCTSZeroPlayer("./ttt_solved.pth")
 
     player_map = {
         TicTacToePlayer.X:
-            # human_controller
-            computer_controller
-        ,
-        TicTacToePlayer.O:
             human_controller
             # computer_controller
+        ,
+        TicTacToePlayer.O:
+            # human_controller
+            computer_controller
     }
 
     run = True

@@ -47,26 +47,35 @@ def minimax(root, player=0):
 
     return root.val
 
-
+from torch import tensor
+t = tensor([1., 0., 0., 1., 0., 0., 1., 0., 0., 1., 0., 0., 0., 0., 1., 1., 0., 0.,
+        0., 1., 0., 0., 0., 1., 0., 1., 0.])
+minimax_dataset_cache = {}
 def minimax_dataset(node, player, dataset):
+    game_str = str(node.game)
+    if game_str in minimax_dataset_cache:
+        return minimax_dataset_cache[game_str]
     if node.is_terminal():
-        return node.reward()
+        return node.reward() * (-1 if player.is_first() else 1)
 
-    r = []
-    for child in node.children():
-        r.append(minimax_dataset(child, player.next(), dataset))
+    r = {}
+    for action, child in node.children():
+        r[action] = minimax_dataset(child, player.next(), dataset)
+
+    res = 0
+    if player.is_first():
+        res = max(r.values())
+    else:
+        res = min(r.values())
 
     # normalized rewards == action probabilities
-    total = sum(r)
-    a = [1 / len(node.children()) for _ in node.children()] \
-        if total == 0 else [r_i / total for r_i in r]
-    dataset.append((node.state(), a))
+    p = [1 if a in r and r[a] == res else 0 for a in range(node.action_space())]
+    total_p = sum(p)
+    p = [p_i / total_p for p_i in p]
+    dataset.append((node.state(), p + [res]))
 
-    if player.is_first():
-        return max(r)
-    else:
-        return min(r)
-
+    minimax_dataset_cache[game_str] = res
+    return res
 
 if __name__ == "__main__":
     # Create a tic tac optimal dataset
@@ -83,11 +92,13 @@ if __name__ == "__main__":
     minimax_dataset(root, player, dataset)
     X, Y = unzip(dataset)
     assert len(X) == len(Y), f"len(X) = {len(X)}, len(Y) = {len(Y)}"
+    print(f'Created dataset with {len(dataset)} points')
 
     res = []
     for idx in range(len(X)):
         x_i, y_i = X[idx], Y[idx]
-        res.append(x_i.reshape((-1,)).tolist() + y_i)
+        x_i = x_i.reshape((-1,)).tolist()        
+        res.append(x_i + y_i)
 
     with open("tictactoe_solved.csv", "w") as file:
         for line in res:

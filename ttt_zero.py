@@ -26,6 +26,9 @@ class TTTZeroNode(MCTSZeroNode):
         self.state_tensor = None
         self.valid_actions = []
 
+    def action_space(self):
+        return self.game.board_size**2 
+
     def state(self):
         if self.state_tensor is None:
             self.state_tensor = torch.zeros((3, 3, 3), dtype=torch.float)
@@ -55,7 +58,8 @@ class TTTZeroNode(MCTSZeroNode):
                 if self.game.board[j][i] is None:
                     g = deepcopy(self.game)
                     g.move(i, j)
-                    children.append(TTTZeroNode.from_game(g))
+                    # children.append(TTTZeroNode.from_game(g))
+                    children.append((j * 3 + i, TTTZeroNode.from_game(g)))
 
         return children
 
@@ -88,10 +92,10 @@ if __name__ == "__main__":
     hp_string = '\n'.join(f"{k}: {v}" for k, v in hp.__dict__.items())
     print(f"Hyperparameters:\n{hp_string}")
 
-    ttt_evaluator = BasicNN([27, 100, 100, 100, 100, 10], hp)
+    ttt_evaluator = BasicNN([27, 100, 100, 100, 100, 9], hp)
     TTTZeroNode.evaluator = ttt_evaluator
 
-    ttt_evaluator.load_from_file("ttt9.pth")
+    # ttt_evaluator.load_from_file("ttt9.pth")
     root = TTTZeroNode.from_game(TicTacToe())
     MCTSZero.train_evaluator(root, ttt_evaluator
         , iterations=hp.iterations

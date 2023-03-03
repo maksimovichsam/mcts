@@ -130,12 +130,6 @@ class MCTSZero:
     def play(node: MCTSZeroNode, **kwargs) -> tuple[list[MCTSZeroNode], list[SearchPolicy]]:
         examples = []
         actions = []
-        from tictactoe import TicTacToePlayer
-        node.game.board[0][1] = TicTacToePlayer.O
-        # node.game.board[0][0] = 
-        node.game.board[1][1] = TicTacToePlayer.X
-        # node.game.board[2][-1] = TicTacToePlayer.X
-        # node.game.player = TicTacToePlayer.O
 
         while not node.is_terminal():
             examples.append([node, None, None])
