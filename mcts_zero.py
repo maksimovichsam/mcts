@@ -47,7 +47,7 @@ class MCTSZeroNode(ABC):
         return action, self.node_children()[action]
 
     def expand(self) -> float:
-        self.p, self.v = self.evaluate(self.state(), use_grad=False)
+        self.p, self.v = self.evaluate(self.state())
         self.visits      = torch.zeros((len(self.p), ), dtype=torch.float)
         self.total_value = torch.zeros((len(self.p), ), dtype=torch.float)
         self.q           = torch.zeros((len(self.p), ), dtype=torch.float)
@@ -146,42 +146,10 @@ class MCTSZero:
                 node = node.node_children()[action]
             r = node.reward()
             for idx, example in enumerate(reversed(examples)):
+                assert (-1)**(example[0].game.player == node.game.player) == (-1)**(idx % 2)
                 example[3] = (-1)**(example[0].game.player == node.game.player) * r
             return examples
         
-    @staticmethod
-    def display(board):
-        n = board.shape[0]
-
-        s = ""
-        s += "  "
-        for y in range(n):
-            s += f"{y} "
-        s += "\n"
-        s += "  "
-        for _ in range(n):
-            s += "--"
-        s += "--\n"
-        for y in range(n):
-            s += f"{y}|"    # print the row #
-            for x in range(n):
-                piece = board[y][x]    # get the piece to print
-                if piece == -1: s += "X "
-                elif piece == 1: s += "O "
-                else:
-                    if x==n:
-                        s += "-"
-                    else:
-                        s += "- "
-            s += "|\n"
-
-        s += "  "
-        for _ in range(n):
-            s += "--"
-        s += "--\n"
-        print(s)
-        return s
-
     @staticmethod
     def train_evaluator(root: MCTSZeroNode, evaluator, 
             num_epochs=5, num_episodes=1, iterations=10, batch_size=256, 
@@ -191,11 +159,8 @@ class MCTSZero:
             weight_decay=evaluator.hp.weight_decay)
 
         game_buffer = deque(maxlen=buffer_size)
-        stop = False
 
         for iteration in range(iterations):
-            if stop:
-                break
             Timer.start("iteration")
 
             for episodes in range(num_episodes):
@@ -204,63 +169,41 @@ class MCTSZero:
                 root.reset()
                 root.clear_game_tree()
 
-            random.shuffle(game_buffer)
-
-            # with open(SAVE_FILE, "a") as save_file:
-            #     for e in game_buffer:
-            #         save_file.write(MCTSZero.display(e[1]))
-            #         p_val = [f"{p_i:.5f}" for p_i in e[2].weights.tolist()]
-            #         save_file.write(f"{p_val} {e[3]}\n")
+            game_buffer_order = list(range(len(game_buffer)))
 
             num_batches = math.ceil(len(game_buffer) / batch_size)
-            for epoch in range(num_epochs):
-                evaluator.train()
-                for batch_number in range(num_batches):
-                    sample_ids = np.random.randint(len(game_buffer), size=batch_size)
+            evaluator.train()
 
+            for epoch in range(num_epochs):
+                random.shuffle(game_buffer_order)
+
+                for batch_number in range(num_batches):
                     loss = torch.tensor([0.0])
-                    mse_loss = []
-                    nll_loss = []
-                    
                     losses = []
 
-                    # batch_start = batch_number * batch_size
-                    # batch_end = min(batch_start + batch_size, len(game_buffer))
-                    for i in range(batch_size):
-                        node, state, policy, r = game_buffer[sample_ids[i]]
-                        # p, v = node.evaluate(state)
-                        # nll_loss = torch.sum(
-                        #     torch.dot(policy.weights, torch.log(p + 0.001)) 
-                        # )
+                    batch_start = batch_number * batch_size
+                    batch_end = min(batch_start + batch_size, len(game_buffer))
+                    for i in range(batch_start, batch_end):
+                        node, state, policy, r = game_buffer[game_buffer_order[i]]
 
                         pi = policy.weights
                         pi_board = torch.zeros((9, ))
                         pi_board[node.valid_actions] = pi
 
                         res = evaluator(state.reshape((-1, )))
-                        p, v = F.log_softmax(res[:9], dim=0), torch.tanh(res[10:])
-                        nll_loss.append( -torch.sum(p * pi_board) )
+                        p, v = torch.softmax(res[:9], dim=0), torch.tanh(res[10:])
+                        loss_i = (r - v)**2 - torch.sum((pi_board * torch.log(p)))
 
-                        mse_loss.append( (r - v)**2 )
-                        # loss_i = (r - v)**2 + torch.sum((p - policy.weights)**2)
-
-                        # loss_i = mse_loss + nll_loss
-                        # loss += loss_i
-                        # losses.append(loss_i.item())
-                    loss = torch.sum(torch.stack(mse_loss)) + torch.sum(torch.stack(nll_loss))
-                    loss /= (batch_size)
+                        loss += loss_i
+                        losses.append(loss_i.item())
+                    loss /= (batch_end - batch_start)
 
                     optimizer.zero_grad()
                     loss.backward()
                     optimizer.step()
 
-                    if loss.item() < stop_loss:
-                        stop = True
-
                     print(f"Loss: {loss.item():>10.4f} Iteration [{iteration+1:>5.0f}/{iterations:>5.0f}] Batch [{batch_number:>8.0f}/{num_batches:>8.0f}]")
-                    evaluator.eval()
                     on_batch_complete()
-                    evaluator.train()
 
             print(f"Iteration [{iteration:>5d}/{iterations}], took {Timer.str('iteration')}")
 

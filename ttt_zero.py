@@ -45,23 +45,14 @@ class TTTZeroNode(MCTSZeroNode):
             self.state_tensor *= value_map[self.game.player]
         return self.state_tensor
                     
-    def evaluate(self, state, use_grad=True) -> tuple[list[float], float]:
-        if use_grad:
-            res = self.evaluator(state.reshape((-1, )))
-            p, v = res[:10][self.valid_actions], res[10:]
-            p = torch.softmax(p, dim=0)
-            v = torch.tanh(v)
-            return p, v
-
-        self.evaluator.eval()
-        with torch.no_grad():
-            res = self.evaluator(state.reshape((-1, )))
-            p, v = res[:10], res[10:]
-            p[9] = 0
-            p = torch.exp(F.log_softmax(p, dim=0))
-            v = torch.tanh(v)
-            p = p[self.valid_actions] / torch.sum(p[self.valid_actions])
-            return p, v
+    def evaluate(self, state) -> tuple[list[float], float]:
+        res = self.evaluator(state.reshape((-1, )))
+        p, v = res[:10], res[10:]
+        p[9] = 0
+        p = torch.softmax(p, dim=0)
+        v = torch.tanh(v)
+        p = p[self.valid_actions] / torch.sum(p[self.valid_actions])
+        return p, v
 
     def children(self) -> list['MCTSZeroNode']:
         if self.game.game_over():
@@ -74,7 +65,6 @@ class TTTZeroNode(MCTSZeroNode):
                     g = deepcopy(self.game)
                     g.move(i, j)
                     children.append(from_game(g))
-                    # children.append((j * 3 + i, TTTZeroNode.from_game(g)))
 
         return children
 
@@ -114,7 +104,7 @@ if __name__ == "__main__":
 
     hp = BasicNN.HyperParameters()
     hp.lr = 0.001
-    hp.iterations = 3
+    hp.iterations = 25
     hp.simulations = 25
     hp.num_episodes = 25
     hp.num_epochs = 10
@@ -122,7 +112,6 @@ if __name__ == "__main__":
     hp.buffer_size = 2000000
     hp.temperature = 1
     hp.c_puct = 1
-    hp.stop_loss = 0.000
     hp.weight_decay = 0
     torch.manual_seed(0)
     random.seed(0)
@@ -193,7 +182,6 @@ if __name__ == "__main__":
         , batch_size=hp.batch_size
         , temperature=hp.temperature
         , c_puct=hp.c_puct
-        , stop_loss=hp.stop_loss
         , on_batch_complete=print_generalization_loss
         )
     
