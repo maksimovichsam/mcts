@@ -1,24 +1,27 @@
-from mcts_zero import MCTSZeroNode, MCTSZero
+from mcts_zero import MCTSZeroNode, MCTSZero, SearchPolicy
 from smaksimovich.torch_utils import BasicNN
 from tictactoe import TicTacToe, TicTacToePlayer
 from copy import deepcopy
 import math
 import torch
 
+import torch.nn.functional as F
+
+node_map = {}
+def from_game(game: TicTacToe):
+    global counter
+    g = str(game)
+    if g in node_map:
+        return node_map[g]
+    else:
+        node_map[g] = TTTZeroNode(game)
+        return node_map[g]
 
 class TTTZeroNode(MCTSZeroNode):
-    node_map = {}
     evaluator: BasicNN = None
 
-    @staticmethod
-    def from_game(game: TicTacToe):
-        if game not in TTTZeroNode.node_map:
-            TTTZeroNode.node_map[game] = TTTZeroNode(game)
-        return TTTZeroNode.node_map[game]
-
-    def reset(self):
-        super().reset()
-        TTTZeroNode.node_map.clear()
+    def clear_game_tree(self):
+        node_map.clear()
 
     def __init__(self, game: TicTacToe):
         super().__init__()
@@ -31,22 +34,34 @@ class TTTZeroNode(MCTSZeroNode):
 
     def state(self):
         if self.state_tensor is None:
-            self.state_tensor = torch.zeros((3, 3, 3), dtype=torch.float)
+            self.state_tensor = torch.zeros((3, 3), dtype=torch.float)
             index_map = { None: 0, TicTacToePlayer.X: 1, TicTacToePlayer.O: 2}
+            value_map = { None: 0, TicTacToePlayer.X: 1, TicTacToePlayer.O: -1}
             for j in range(self.game.board_size):
                 for i in range(self.game.board_size):
-                    self.state_tensor[j][i][index_map[self.game.board[j][i]]] = 1
+                    self.state_tensor[j][i] = value_map[self.game.board[j][i]]
                     if self.game.board[j][i] is None:
                         self.valid_actions.append(j * 3 + i)
-            self.state_tensor = self.state_tensor.reshape((-1, ))
+            self.state_tensor *= value_map[self.game.player]
         return self.state_tensor
                     
-    def evaluate(self, state) -> tuple[list[float], float]:
-        res = self.evaluator(state)
-        p, v = res[:9][self.valid_actions], res[9:]
-        p = torch.softmax(p, dim=0)
-        v = torch.arctan(v) / (math.pi / 2)
-        return p, v
+    def evaluate(self, state, use_grad=True) -> tuple[list[float], float]:
+        if use_grad:
+            res = self.evaluator(state.reshape((-1, )))
+            p, v = res[:10][self.valid_actions], res[10:]
+            p = torch.softmax(p, dim=0)
+            v = torch.tanh(v)
+            return p, v
+
+        self.evaluator.eval()
+        with torch.no_grad():
+            res = self.evaluator(state.reshape((-1, )))
+            p, v = res[:10], res[10:]
+            p[9] = 0
+            p = torch.exp(F.log_softmax(p, dim=0))
+            v = torch.tanh(v)
+            p = p[self.valid_actions] / torch.sum(p[self.valid_actions])
+            return p, v
 
     def children(self) -> list['MCTSZeroNode']:
         if self.game.game_over():
@@ -58,45 +73,117 @@ class TTTZeroNode(MCTSZeroNode):
                 if self.game.board[j][i] is None:
                     g = deepcopy(self.game)
                     g.move(i, j)
-                    # children.append(TTTZeroNode.from_game(g))
-                    children.append((j * 3 + i, TTTZeroNode.from_game(g)))
+                    children.append(from_game(g))
+                    # children.append((j * 3 + i, TTTZeroNode.from_game(g)))
 
         return children
 
     def reward(self) -> float:
+        if not self.is_terminal():
+            return 0
         r = 1
         if self.game.is_tie():
-            r = 0
+            r = -1e-4
         return r
+    
+    def getSymmetries(self, pi):
+        # mirror, rotational
+        # assert(len(pi) == self.n**2+1)  # 1 for pass
+        pi_board = torch.zeros((9, ))
+        pi_board[self.valid_actions] = pi.weights
+        pi_board = pi_board.reshape((3, 3))
+        l = []
+
+        for i in range(1, 5):
+            for j in [True, False]:
+                newB = torch.rot90(self.state(), i)
+                newPi = torch.rot90(pi_board, i)
+                if j:
+                    newB = torch.fliplr(newB)
+                    newPi = torch.fliplr(newPi)
+                l += [(newB, SearchPolicy(newPi.ravel()))]
+        return l
 
 
 if __name__ == "__main__":
     import os.path
     import torch
     import random
+    import numpy as np
+    from smaksimovich.torch_utils import SimpleDataset
 
     hp = BasicNN.HyperParameters()
-    hp.lr = 0.0001
-    hp.iterations = 50
-    hp.simulations = 1000
-    hp.num_episodes = 20
+    hp.lr = 0.001
+    hp.iterations = 3
+    hp.simulations = 25
+    hp.num_episodes = 25
     hp.num_epochs = 10
-    hp.buffer_size = 64 * 10
     hp.batch_size = 64
+    hp.buffer_size = 2000000
     hp.temperature = 1
-    hp.c_puct = 4
-    hp.stop_loss = 0.001
-    hp.weight_decay = 10e-4
+    hp.c_puct = 1
+    hp.stop_loss = 0.000
+    hp.weight_decay = 0
     torch.manual_seed(0)
     random.seed(0)
+    np.random.seed(0)
     hp_string = '\n'.join(f"{k}: {v}" for k, v in hp.__dict__.items())
     print(f"Hyperparameters:\n{hp_string}")
 
-    ttt_evaluator = BasicNN([27, 100, 100, 100, 100, 9], hp)
+    ttt_evaluator = BasicNN([9, 100, 100, 100, 100, 100, 11], hp)
     TTTZeroNode.evaluator = ttt_evaluator
 
+    with open("tictactoe_solved.csv", "r") as file:
+        x = []
+        y = []
+        lines = file.read().split('\n')
+        for line in lines:
+            if len(line) == 0:
+                continue
+            line = line.split(',')
+            x_i = torch.tensor( list(map(float, line[:27])), dtype=torch.float)
+            y_i = torch.tensor( list(map(float, line[27:])), dtype=torch.float)
+            assert len(y_i) == 10
+            new_x_i = torch.zeros((9, ))
+            for i in range(0, 27, 3):
+                if x_i[i + 1] == 1:
+                    new_x_i[i // 3] = 1
+                elif x_i[i + 2] == 1:
+                    new_x_i[i // 3] = -1
+            new_x_i = new_x_i.reshape((3, 3))
+            x.append(new_x_i)
+            y.append(y_i)
+        dataset = SimpleDataset(x, y)
+        action_probabilites = torch.stack([ y_i[0:9] for y_i in y ])
+        max_actions = torch.max(action_probabilites, dim=1).values.reshape((-1, 1))
+        max_actions = max_actions == action_probabilites
+        best_actions = [[] for j in range(len(y))]
+        for j in range(len(y)):
+            for i in range(9):
+                if max_actions[j, i]:
+                    best_actions[j].append(i)
+
+    generalization_loss = []
+    def print_generalization_loss():
+        with torch.no_grad():
+            X = torch.stack(x).reshape((-1, 9))
+            model_y = ttt_evaluator(X)
+            model_probabilites = model_y[:, 0:9]
+            model_actions = torch.argmax(model_probabilites, dim=1)
+            assert model_actions.shape == (len(y),), f"Expected {(len(y),)} got {model_actions.shape}"
+
+            total_correct = 0
+            for j in range(len(y)):
+                if model_actions[j].item() in best_actions[j]:
+                    total_correct += 1
+
+            percent_correct = total_correct / len(y)
+            generalization_loss.append(percent_correct)
+            print(f"total correct = {total_correct} / {len(y)} = {percent_correct}")
+    print_generalization_loss()
+    
     # ttt_evaluator.load_from_file("ttt9.pth")
-    root = TTTZeroNode.from_game(TicTacToe())
+    root = from_game(TicTacToe())
     MCTSZero.train_evaluator(root, ttt_evaluator
         , iterations=hp.iterations
         , simulations=hp.simulations
@@ -107,7 +194,12 @@ if __name__ == "__main__":
         , temperature=hp.temperature
         , c_puct=hp.c_puct
         , stop_loss=hp.stop_loss
+        , on_batch_complete=print_generalization_loss
         )
+    
+    from matplotlib import pyplot as plt
+    plt.plot(list(range(len(generalization_loss))), generalization_loss)
+    plt.show()
 
     i = 0
     while os.path.exists(f"ttt{i}.pth"):
