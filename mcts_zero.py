@@ -1,13 +1,9 @@
 from abc import ABC, abstractmethod
-from smaksimovich import Timer
-from torch.distributions import Dirichlet
-import torch.nn.functional as F
+from smaksimovich import Timer, unzip
 from collections import deque
 import random
 import math
 import torch
-import torch.nn as nn
-import numpy as np
 
 
 class SearchPolicy:
@@ -79,6 +75,18 @@ class MCTSZeroNode(ABC):
         self.nodes = None
 
     @abstractmethod
+    def action_space(self) -> int:
+        """ Returns the maximum number of actions of the game, over all game states
+        """
+        pass
+
+    @abstractmethod
+    def legal_actions(self) -> list[int]:
+        """ Returns a list of actions, indicating allowed actions for the given state
+        """
+        pass
+
+    @abstractmethod
     def state(self):
         """ Returns the tensor representation of this node
         """
@@ -130,25 +138,28 @@ class MCTSZero:
 
     @staticmethod
     def play(node: MCTSZeroNode, **kwargs) -> tuple[list[MCTSZeroNode], list[SearchPolicy]]:
-        while True:
-            examples = []
-            actions = []
-            while not node.is_terminal():
-                policy = MCTSZero.search(node, **kwargs)
-                examples.append([node, node.state(), policy, None])
+        examples = []
+        actions = []
+        while not node.is_terminal():
+            policy = MCTSZero.search(node, **kwargs)
 
-                # sym = node.getSymmetries(policy)
-                # for b, p in sym:
-                #     examples.append([node, b, p, None])
+            pi = torch.zeros((node.action_space(), ))
+            pi[node.legal_actions()] = policy.weights
+            examples.append([node.state(), pi, node.game.player])
 
-                action = policy.pick()
-                actions.append(action)
-                node = node.node_children()[action]
-            r = node.reward()
-            for idx, example in enumerate(reversed(examples)):
-                assert (-1)**(example[0].game.player == node.game.player) == (-1)**(idx % 2)
-                example[3] = (-1)**(example[0].game.player == node.game.player) * r
-            return examples
+            # sym = node.getSymmetries(policy)
+            # for b, p in sym:
+            #     examples.append([node, b, p, None])
+
+            action = policy.pick()
+            actions.append(action)
+            node = node.node_children()[action]
+
+        r = node.reward()
+        for idx, example in enumerate(reversed(examples)):
+            assert (-1)**(example[2] == node.game.player) == (-1)**(idx % 2)
+            example[2] = (-1)**(example[2] == node.game.player) * r
+        return examples
         
     @staticmethod
     def train_evaluator(root: MCTSZeroNode, evaluator, 
@@ -159,6 +170,7 @@ class MCTSZero:
             weight_decay=evaluator.hp.weight_decay)
 
         game_buffer = deque(maxlen=buffer_size)
+        losses = []
 
         for iteration in range(iterations):
             Timer.start("iteration")
@@ -178,24 +190,20 @@ class MCTSZero:
                 random.shuffle(game_buffer_order)
 
                 for batch_number in range(num_batches):
-                    loss = torch.tensor([0.0])
-                    losses = []
 
                     batch_start = batch_number * batch_size
                     batch_end = min(batch_start + batch_size, len(game_buffer))
-                    for i in range(batch_start, batch_end):
-                        node, state, policy, r = game_buffer[game_buffer_order[i]]
 
-                        pi = policy.weights
-                        pi_board = torch.zeros((9, ))
-                        pi_board[node.valid_actions] = pi
+                    states, policies, r = unzip(game_buffer[i] for i in range(batch_start, batch_end))
+                    states = torch.stack(states)
+                    policies = torch.stack(policies)
+                    r = torch.tensor(r, dtype=torch.float).reshape((-1, 1))
 
-                        res = evaluator(state.reshape((-1, )))
-                        p, v = torch.softmax(res[:9], dim=0), torch.tanh(res[10:])
-                        loss_i = (r - v)**2 - torch.sum((pi_board * torch.log(p)))
+                    model_output = evaluator(states.reshape((-1, 9)))
+                    p, v = torch.softmax(model_output[:, :9], dim=1), torch.tanh(model_output[:, 10:])
 
-                        loss += loss_i
-                        losses.append(loss_i.item())
+                    # mse loss + nll loss
+                    loss = torch.sum((r - v)**2) - torch.sum(policies * torch.log(p))
                     loss /= (batch_end - batch_start)
 
                     optimizer.zero_grad()
@@ -205,5 +213,5 @@ class MCTSZero:
                     print(f"Loss: {loss.item():>10.4f} Iteration [{iteration+1:>5.0f}/{iterations:>5.0f}] Batch [{batch_number:>8.0f}/{num_batches:>8.0f}]")
                     on_batch_complete()
 
-            print(f"Iteration [{iteration:>5d}/{iterations}], took {Timer.str('iteration')}")
+            print(f"Iteration [{iteration+1:>5d}/{iterations}], took {Timer.str('iteration')}")
 

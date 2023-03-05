@@ -32,6 +32,9 @@ class TTTZeroNode(MCTSZeroNode):
     def action_space(self):
         return self.game.board_size**2 
 
+    def legal_actions(self) -> list[int]:
+        return self.valid_actions
+
     def state(self):
         if self.state_tensor is None:
             self.state_tensor = torch.zeros((3, 3), dtype=torch.float)
@@ -104,7 +107,7 @@ if __name__ == "__main__":
 
     hp = BasicNN.HyperParameters()
     hp.lr = 0.001
-    hp.iterations = 25
+    hp.iterations = 5
     hp.simulations = 25
     hp.num_episodes = 25
     hp.num_epochs = 10
@@ -171,7 +174,6 @@ if __name__ == "__main__":
             print(f"total correct = {total_correct} / {len(y)} = {percent_correct}")
     print_generalization_loss()
     
-    # ttt_evaluator.load_from_file("ttt9.pth")
     root = from_game(TicTacToe())
     MCTSZero.train_evaluator(root, ttt_evaluator
         , iterations=hp.iterations
