@@ -82,12 +82,13 @@ if __name__ == "__main__":
     # X = game state
     # Y = probability distribution of which move to make
 
+    import ttt_zero
     from ttt_zero import TTTZeroNode
     from tictactoe import TicTacToePlayer, TicTacToe
     from smaksimovich import unzip
 
     dataset = []
-    root = TTTZeroNode.from_game(TicTacToe())
+    root = ttt_zero.from_game(TicTacToe())
     player = TicTacToePlayer.X
     minimax_dataset(root, player, dataset)
     X, Y = unzip(dataset)

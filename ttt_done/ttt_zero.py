@@ -50,8 +50,7 @@ class TTTZeroNode(MCTSZeroNode):
                     
     def evaluate(self, state) -> tuple[list[float], float]:
         res = self.evaluator(state.reshape((-1, )))
-        p, v = res[:10], res[10:]
-        p[9] = 0
+        p, v = res[:9], res[9:]
         p = torch.softmax(p, dim=0)
         v = torch.tanh(v)
         p = p[self.valid_actions] / torch.sum(p[self.valid_actions])
@@ -106,23 +105,27 @@ if __name__ == "__main__":
     from smaksimovich.torch_utils import SimpleDataset
 
     hp = BasicNN.HyperParameters()
-    hp.lr = 0.001
-    hp.iterations = 5
-    hp.simulations = 25
-    hp.num_episodes = 25
+    hp.lr = 0.000001
+    hp.iterations = 10
+    hp.simulations = 600
+    hp.num_episodes = 100
     hp.num_epochs = 10
     hp.batch_size = 64
-    hp.buffer_size = 2000000
-    hp.temperature = 1
-    hp.c_puct = 1
-    hp.weight_decay = 0
+    hp.buffer_size = 64 * 100000
+    hp.temperature_threshold = None
+    hp.c_puct = 4
+    hp.weight_decay = 1e-4
+    hp.lr_decay_steps = 10
+    hp.gamma = 0.1
+    hp.alpha = None
     torch.manual_seed(0)
     random.seed(0)
     np.random.seed(0)
     hp_string = '\n'.join(f"{k}: {v}" for k, v in hp.__dict__.items())
     print(f"Hyperparameters:\n{hp_string}")
 
-    ttt_evaluator = BasicNN([9, 100, 100, 100, 100, 100, 11], hp)
+    ttt_evaluator = BasicNN([9, 100, 100, 100, 100, 100, 10], hp)
+    ttt_evaluator.load_from_file("./ttt974.pth")
     TTTZeroNode.evaluator = ttt_evaluator
 
     with open("tictactoe_solved.csv", "r") as file:
@@ -133,19 +136,11 @@ if __name__ == "__main__":
             if len(line) == 0:
                 continue
             line = line.split(',')
-            x_i = torch.tensor( list(map(float, line[:27])), dtype=torch.float)
-            y_i = torch.tensor( list(map(float, line[27:])), dtype=torch.float)
+            x_i = torch.tensor( list(map(float, line[:9])), dtype=torch.float)
+            y_i = torch.tensor( list(map(float, line[9:])), dtype=torch.float)
             assert len(y_i) == 10
-            new_x_i = torch.zeros((9, ))
-            for i in range(0, 27, 3):
-                if x_i[i + 1] == 1:
-                    new_x_i[i // 3] = 1
-                elif x_i[i + 2] == 1:
-                    new_x_i[i // 3] = -1
-            new_x_i = new_x_i.reshape((3, 3))
-            x.append(new_x_i)
+            x.append(x_i)
             y.append(y_i)
-        dataset = SimpleDataset(x, y)
         action_probabilites = torch.stack([ y_i[0:9] for y_i in y ])
         max_actions = torch.max(action_probabilites, dim=1).values.reshape((-1, 1))
         max_actions = max_actions == action_probabilites
@@ -175,20 +170,23 @@ if __name__ == "__main__":
     print_generalization_loss()
     
     root = from_game(TicTacToe())
-    MCTSZero.train_evaluator(root, ttt_evaluator
+    losses = MCTSZero.train_evaluator(root, ttt_evaluator
         , iterations=hp.iterations
         , simulations=hp.simulations
         , num_episodes=hp.num_episodes
         , num_epochs=hp.num_epochs
         , buffer_size=hp.buffer_size
         , batch_size=hp.batch_size
-        , temperature=hp.temperature
         , c_puct=hp.c_puct
         , on_batch_complete=print_generalization_loss
         )
     
     from matplotlib import pyplot as plt
+    plt.title("Generalization Loss")
     plt.plot(list(range(len(generalization_loss))), generalization_loss)
+    plt.figure()
+    plt.title("Losses")
+    plt.plot(list(range(len(losses))), losses)
     plt.show()
 
     i = 0
