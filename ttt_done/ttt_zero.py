@@ -105,10 +105,10 @@ if __name__ == "__main__":
     from smaksimovich.torch_utils import SimpleDataset
 
     hp = BasicNN.HyperParameters()
-    hp.lr = 0.000001
+    hp.lr = 0.001
     hp.iterations = 10
-    hp.simulations = 600
-    hp.num_episodes = 100
+    hp.simulations = 25
+    hp.num_episodes = 25
     hp.num_epochs = 10
     hp.batch_size = 64
     hp.buffer_size = 64 * 100000
@@ -125,7 +125,6 @@ if __name__ == "__main__":
     print(f"Hyperparameters:\n{hp_string}")
 
     ttt_evaluator = BasicNN([9, 100, 100, 100, 100, 100, 10], hp)
-    ttt_evaluator.load_from_file("./ttt974.pth")
     TTTZeroNode.evaluator = ttt_evaluator
 
     with open("tictactoe_solved.csv", "r") as file:
