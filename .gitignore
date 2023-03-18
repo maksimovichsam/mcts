@@ -3,3 +3,5 @@ __pycache__
 *.pth
 pp_btree.txt
 .vscode
+experiments.log
+snake.png

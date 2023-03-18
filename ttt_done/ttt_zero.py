@@ -106,10 +106,10 @@ if __name__ == "__main__":
 
     hp = BasicNN.HyperParameters()
     hp.lr = 0.001
-    hp.iterations = 10
+    hp.iterations = 1
     hp.simulations = 25
     hp.num_episodes = 25
-    hp.num_epochs = 10
+    hp.num_epochs = 200
     hp.batch_size = 64
     hp.buffer_size = 64 * 100000
     hp.temperature_threshold = None

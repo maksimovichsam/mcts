@@ -271,7 +271,7 @@ class MCTSZero:
                     p, v = torch.softmax(model_output[:, :9], dim=1), torch.tanh(model_output[:, 9:])
 
                     # mse loss + nll loss
-                    loss = torch.sum((r - v)**2) - torch.sum(policies * torch.log(p))
+                    loss = torch.sum((r - v)**2) - torch.sum(policies * torch.log(p)) + torch.sum(policies * torch.log(policies + 1e-8))
                     loss /= (batch_end - batch_start)
 
                     optimizer.zero_grad()

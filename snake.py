@@ -2,10 +2,18 @@ import sys
 from tkinter import RIGHT
 from typing import *
 from collections import defaultdict, deque
+from dataclasses import dataclass
 import numpy as np
 import random
 import pygame
 
+@dataclass
+class Stats:
+    death_by_edge: int = 0
+    death_by_crash: int = 0
+    death_by_hunger: int = 0
+
+stats = Stats()
 
 class Direction:
     UP    = np.array([0, -1])
@@ -13,42 +21,79 @@ class Direction:
     LEFT  = np.array([-1, 0])
     RIGHT = np.array([1, 0])
 
+DIRECTIONS = [Direction.UP, Direction.DOWN, Direction.LEFT, Direction.RIGHT]
+
+class DirectionInteger:
+    UP = 0
+    DOWN = 1
+    LEFT = 2
+    RIGHT = 3
+
+DIRECTION_INTEGERS = [DirectionInteger.UP, DirectionInteger.DOWN, DirectionInteger.LEFT, DirectionInteger.RIGHT]
 
 class SnakePlayer:
+    STARVATION_LEVEL = 32
 
     def __init__(self, tiles: deque, direction:Direction=Direction.LEFT):
         self.tiles = tiles # the head of the snake is at the front of the deque
         self.direction = direction
         self.dead = False
+        self.hunger = 0
 
-    def set_direction(self, d):
+    def set_direction(self, d, assert_valid=False):
         if len(self.tiles) < 2:
             self.direction = d
         opposite_dir = self.tiles[1] - self.tiles[0]
-        if not (d == opposite_dir).all():
+        can_set_direction = not (d == opposite_dir).all()
+        if assert_valid:
+            assert can_set_direction, "Invalid direction set"
+        if can_set_direction:
             self.direction = d
 
-    def get_valid_directions(self, d):
-        directions = [Direction.UP, Direction.DOWN, Direction.LEFT, Direction.RIGHT]
+    def get_valid_directions(self, directions=None):
+        if directions == "integers":
+            directions = DIRECTION_INTEGERS[:]
+        else:
+            directions = DIRECTIONS[:]
         opposite_dir = self.tiles[1] - self.tiles[0]
-        directions.remove(opposite_dir)
+        if all(opposite_dir == Direction.UP):
+            directions.pop(0)
+        elif all(opposite_dir == Direction.DOWN):
+            directions.pop(1)
+        elif all(opposite_dir == Direction.LEFT):
+            directions.pop(2)
+        elif all(opposite_dir == Direction.RIGHT):
+            directions.pop(3)
+        else:
+            assert False
         assert len(directions) == 3
         return directions
-
 
     def step(self, board: 'SnakeBoard'):
         if self.dead:
             return
 
         new_head = self.tiles[0] + self.direction
-        if board.is_in_bounds(new_head) and board.is_empty(new_head):
+        in_bounds = board.is_in_bounds(new_head)
+        next_tile_empty = board.is_empty(new_head)
+        if in_bounds and next_tile_empty:
             self.tiles.appendleft(new_head)
             if (new_head == board.apple).all():
                 board.generate_apple()
+                self.hunger = 0
             else:
                 self.tiles.pop()
+                self.hunger += 1
+                if self.hunger >= SnakePlayer.STARVATION_LEVEL:
+                    self.dead = True
+                    stats.death_by_hunger += 1
         else:
-            self.dead = True        
+            self.dead = True
+            if not in_bounds:
+                stats.death_by_edge += 1
+            if not next_tile_empty:
+                stats.death_by_crash += 1
+        
 
     def has_tile(self, tile):
         for t in self.tiles:
@@ -66,19 +111,44 @@ class SnakePlayer:
         
 
 class SnakeBoard:
-    width  = 20
-    height = 20
+    width  = 8
+    height = 8
 
-    def __init__(self, players: List[SnakePlayer]):
+    def __init__(self, players: List[SnakePlayer], id=None, apple=None):
         self.players = players
-        self.generate_apple()
+        if apple is None:
+            self.generate_apple()
+        else:
+            self.apple = apple
 
     def generate_apple(self):
+        i = 0
         while True:
             apple = np.array([random.randint(0, self.width - 1), random.randint(0, self.height - 1)])
+            i += 1
             if self.is_empty(apple):
                 self.apple = apple
                 break
+
+    def __str__(self):
+        BLANK = "."
+        SNAKE = "O"
+        HEAD = "H"
+        APPLE = "X"
+
+        display = ([BLANK] * self.width + ['\n']) * self.height
+        for player in self.players:
+            for (x, y) in player.tiles:
+                display[(self.width + 1) * y + x] = SNAKE
+            head_x, head_y = player.tiles[0]
+            display[(self.width + 1) * head_y + head_x] = HEAD
+        display[(self.width + 1) * self.apple[1] + self.apple[0]] = APPLE
+        display = ''.join(display)
+        display += f"HUNGER: {self.players[0].hunger}"
+        if self.is_gameover():
+            display += "GAMEOVER"
+
+        return display
 
     def step(self):
         for player in self.players:
@@ -92,6 +162,10 @@ class SnakeBoard:
 
     def is_in_bounds(self, tile):
         return 0 <= tile[0] < self.width and 0 <= tile[1] < self.height
+    
+    def legal_actions(self):
+        assert len(self.players) == 1
+        return self.players[0].get_valid_directions(directions="integers")
 
 
 WHITE = 255, 255, 255
@@ -152,7 +226,6 @@ class SnakeViewer:
         pygame.display.flip()
 
 
-
 class HumanController:
     WASD = [pygame.K_w, pygame.K_a, pygame.K_s, pygame.K_d]
     ARROWS = [pygame.K_UP, pygame.K_LEFT, pygame.K_DOWN, pygame.K_RIGHT]
@@ -188,33 +261,65 @@ class HumanController:
     def on_up_pressed(self):
         self.snake.set_direction(Direction.UP)
 
-    def make_move(self):
+    def make_move(self, board):
         HumanController.check_keys()
         for key in HumanController.keys_pressed:
             self.key_map[key](self)
 
 if __name__ == "__main__":
     import time
+    from snake_zero import SnakeNetController
+    import torch
+    
+    torch.manual_seed(0)
+    random.seed(0)
+    np.random.seed(0)
 
+    infinite_mode = True
     sleep_time = 0.075
-    players = [
-        SnakePlayer.build_snake(8, 8, Direction.LEFT)
-        # , SnakePlayer.build_snake(12, 12, Direction.RIGHT)
-    ]
-    controllers = [
-        HumanController(players[0], keyset=HumanController.ARROWS)
-        #, HumanController(players[1], keyset=HumanController.WASD)
-    ]
-    board = SnakeBoard(players)
-    viewer = SnakeViewer(board)
+    def reset_board():
+        players = [
+            SnakePlayer.build_snake(2, 6, Direction.LEFT)
+            # , SnakePlayer.build_snake(12, 12, Direction.RIGHT)
+        ]
+        controllers = [
+            SnakeNetController(players[0], 'snake0.pth')
+            # HumanController(players[0], keyset=HumanController.ARROWS)
+            #, HumanController(players[1], keyset=HumanController.WASD)
+        ]
+        board = SnakeBoard(players) #apple=[0, 7])
+        viewer = SnakeViewer(board)
+        return players, controllers, board, viewer
 
-    while not board.is_gameover():
-        viewer.draw()
+    while True:
+        players, controllers, board, viewer = reset_board()
+        while not board.is_gameover():
+            viewer.draw()
 
-        for i in range(10):
+            # for i in range(10):
+            #     for controller in controllers:
+            #         controller.make_move(board)
+            #     time.sleep(sleep_time / 10)
             for controller in controllers:
-                controller.make_move()
-            time.sleep(sleep_time / 10)
+                controller.make_move(board)
+            time.sleep(sleep_time)
 
-        board.step()
+            old_board = str(board)
+            board.step()
+            s = str(board)
+            if not board.players[0].dead:
+                assert old_board != s
+            
+        if not infinite_mode:
+            break
 
+        print(stats, len(board.players[0].tiles))
+        next_game = True
+        while not next_game:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT: 
+                    sys.exit()
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    next_game = True
+                    break
+                time.sleep(1 / 60)

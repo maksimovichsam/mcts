@@ -1,25 +1,112 @@
-from mcts_zero import MCTSZeroNode
+from mcts_zero import MCTSZeroNode, MCTSZero
 from smaksimovich.torch_utils import BasicNN
-from tictactoe import TicTacToe, TicTacToePlayer
-from snake import SnakeBoard
+from snake import SnakeBoard, Direction, SnakePlayer, DIRECTIONS
 from copy import deepcopy
 import math
 import torch
+from torch.nn import functional as F
+from torch import nn
+
+class ResidualBlock(nn.Module):
+
+    def __init__(self, in_f, out_f, non_linear):
+        super(ResidualBlock, self).__init__()
+        self.non_linear = non_linear()
+        self.conv1 = nn.Conv2d(in_f, out_f, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(out_f, out_f, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv2d(out_f, out_f, kernel_size=3, padding=1)
+
+    def forward(self, x):
+        x = self.non_linear(self.conv1(x))
+        x = x + self.non_linear(self.conv2(x))
+        return x + self.conv3(x)
+
+class SnakeNet(nn.Module):
+
+    def __init__(self):
+        super(SnakeNet, self).__init__()
+        self.non_linear = nn.ReLU
+
+        # same padding => 2*p + k + 1 = 0 => p = (k - 1) / 2
+        # (32, 32, 2, 2) -> (16, 16, 2, 2) -> (8, 8, 2, 2) -> (4, 4, 2, 2)
+        self.cnn = nn.Sequential(
+            # 8, 8
+            # ResidualBlock(64, 128, self.non_linear),
+            nn.Conv2d(4, 32, kernel_size=3, padding=1),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            # 4, 4
+            nn.BatchNorm2d(32),
+            # ResidualBlock(32, 64, self.non_linear),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            # 2, 2
+        )
+        self.cnn_out = self.cnn(torch.randn((1, 4, 8, 8))).numel()
+        assert self.cnn_out == 2*2*64, f"Got cnn_out={self.cnn_out}"
+        self.mlp = nn.Sequential(
+            nn.Linear(self.cnn_out, 256),
+            self.non_linear(),
+            nn.Linear(256, 128),
+            self.non_linear(),
+            nn.Linear(128, 64),
+            self.non_linear(),
+            nn.Linear(64, 5)
+        )
+
+    def forward(self, x):
+        x = self.cnn(x)
+        x = self.mlp(x.view((-1, self.cnn_out)))
+        return x
+    
+    def save_to_file(self, file_str):
+        torch.save(self.state_dict(), file_str)
+
+    def load_from_file(self, file_str):
+        self.load_state_dict(torch.load(file_str))
+
+
+class SnakeNetController:
+
+    def __init__(self, snake, load_file=None):
+        self.model = SnakeNet()
+        if load_file is not None:
+            self.model.load_from_file(load_file)
+        SnakeZeroNode.evaluator = self.model        
+        self.snake = snake
+
+    def make_move(self, board):
+        node = SnakeZeroNode.from_game(board)
+        node.is_terminal()
+        p = MCTSZero.search(node, None, gamma=0.997, simulations=5, temperature=1)
+        pi = torch.zeros((node.action_space(), ))
+        pi[node.legal_actions()] = p.weights
+        action = torch.argmax(pi)
+        self.snake.set_direction(DIRECTIONS[action])
 
 
 class SnakeZeroNode(MCTSZeroNode):
     node_map = {}
-    evaluator: BasicNN = None
+    evaluator: SnakeNet
+
+    @staticmethod
+    def init_game():
+        players = [SnakePlayer.build_snake(2, 2, Direction.RIGHT)]
+        return SnakeZeroNode.from_game(SnakeBoard(players))
 
     @staticmethod
     def from_game(game: SnakeBoard):
-        if game not in SnakeZeroNode.node_map:
-            SnakeZeroNode.node_map[game] = SnakeZeroNode(game)
-        return SnakeZeroNode.node_map[game]
+        s = str(game)
+        exists = s in SnakeZeroNode.node_map
+        if not exists:
+            SnakeZeroNode.node_map[s] = SnakeZeroNode(game)
+        return SnakeZeroNode.node_map[s]
 
-    def reset(self):
-        super().reset()
+    def clear_game_tree(self):
         SnakeZeroNode.node_map = {}
+        return SnakeZeroNode.init_game()
+
+    def action_space(self) -> int:
+        return 4
 
     def __init__(self, game: SnakeBoard):
         super().__init__()
@@ -28,40 +115,122 @@ class SnakeZeroNode(MCTSZeroNode):
 
     def state(self):
         if self.state_tensor is None:
-            self.state_tensor = torch.zeros((1, 4, SnakeBoard.height, SnakeBoard.width))
-            self.state_tensor[1, 1, self.game.apple[1], self.game.apple[0]] = 1
+            INDICES = [0, 1, 2, 3]
+            BLANK, APPLE, HEAD, SNAKE = INDICES
+            self.state_tensor = torch.zeros((1, len(INDICES), SnakeBoard.height, SnakeBoard.width))
+            self.state_tensor[:, BLANK, :, :] = 1
+            self.state_tensor[:, BLANK, self.game.apple[1], self.game.apple[0]] = 0
+            self.state_tensor[:, APPLE, self.game.apple[1], self.game.apple[0]] = 1
             for player in self.game.players:
                 head = player.tiles[0]
-                self.state_tensor[1, 2, head[1], head[0]] = 1
+                self.state_tensor[:, BLANK, head[1], head[0]] = 0
+                self.state_tensor[:, HEAD, head[1], head[0]] = 1
 
-                for i in range(len(player.tiles)):
-                    self.state_tensor[1, 3, player.tiles[i][1], player.tiles[i][0]] = 1
+                for i in range(1, len(player.tiles)):
+                    self.state_tensor[:, BLANK , player.tiles[i][1], player.tiles[i][0]] = 0
+                    self.state_tensor[:, SNAKE , player.tiles[i][1], player.tiles[i][0]] = 1
+            self.valid_actions = self.game.legal_actions()
 
         return self.state_tensor
+    
+    def legal_actions(self):
+        return self.game.legal_actions()
                     
     def evaluate(self, state) -> tuple[list[float], float]:
-        res = self.evaluator(state)
-        p, v = res[:2], res[2:]
+        res = SnakeZeroNode.evaluator(state)
+        p, v = res[0, :4], res[0, 4:]
         p = torch.softmax(p, dim=0)
-        v = torch.arctan(v) / (math.pi / 2)
+        v = torch.relu(v + 1) - 1
+        # v = torch.tanh(v)
+        # v = torch.sigmoid(v)
+        # assert 0 <= v.item() <= 1
+        p = p[self.valid_actions] / torch.sum(p[self.valid_actions])
         return p, v
 
     def children(self) -> list['MCTSZeroNode']:
-        if self.game.game_over():
+        if self.game.is_gameover():
             return []
 
         children = []
-        for j in range(self.game.board_size):
-            for i in range(self.game.board_size):
-                if self.game.board[j][i] is None:
-                    g = deepcopy(self.game)
-                    g.move(i, j)
-                    children.append(SnakeZeroNode.from_game(g))
+        actions = self.game.legal_actions()
+        original_snake_len = len(self.game.players[0].tiles)
+        for action in actions:
+            new_game = deepcopy(self.game)
+            new_game.players[0].set_direction(DIRECTIONS[action], assert_valid=True)
+            new_game.step()
+            snake_grew = len(new_game.players[0].tiles) > original_snake_len
+            snake_won = len(new_game.players[0].tiles) >= new_game.width * new_game.height
+            reward = 10 if snake_won else -1 if new_game.is_gameover() else 1 if snake_grew else -0.01
+    
+            children.append((reward, SnakeZeroNode.from_game(new_game)))
 
         return children
 
     def reward(self) -> float:
-        r = 1
-        if self.game.is_tie():
-            r = 0
-        return r
+        assert False
+
+
+if __name__ == "__main__":
+    import os.path
+    import torch
+    import random
+    import numpy as np
+    from mcts_zero import MCTSZero
+
+    hp = BasicNN.HyperParameters()
+    hp.lr = 0.001
+    hp.iterations = 10
+    hp.simulations = 10
+    hp.num_episodes = 100
+    hp.num_epochs = 40
+    hp.batch_size = 64
+    hp.buffer_size = 64 * 1000
+    hp.temperature_threshold = None
+    hp.c_puct = 4
+    hp.weight_decay = 1e-4
+    hp.lr_decay_steps = 10000
+    hp.gamma = 0.1
+    hp.alpha = None
+    torch.manual_seed(0)
+    random.seed(0)
+    np.random.seed(0)
+    hp_string = '\n'.join(f"{k}: {v}" for k, v in hp.__dict__.items())
+    print(f"Hyperparameters:\n{hp_string}")
+
+    snake_net = SnakeNet()
+    snake_net.load_from_file('./snake0.pth')
+    snake_net.hp = hp
+    SnakeZeroNode.evaluator = snake_net
+
+    root = SnakeZeroNode.init_game()
+    losses, rewards = MCTSZero.train_evaluator(root, snake_net
+        , iterations=hp.iterations
+        , simulations=hp.simulations
+        , num_episodes=hp.num_episodes
+        , num_epochs=hp.num_epochs
+        , buffer_size=hp.buffer_size
+        , batch_size=hp.batch_size
+        , c_puct=hp.c_puct
+        )
+    
+    from matplotlib import pyplot as plt
+    window_size = 50
+    avg_rewards = []
+    for i in range(len(rewards)):
+        start = max(0, i - window_size)
+        end = i + 1
+        avg = sum(rewards[start:end]) / (end - start) 
+        avg_rewards.append(avg)
+    plt.title("Rewards")
+    plt.plot(list(range(len(rewards))), rewards, 'g.')
+    plt.plot(list(range(len(rewards))), avg_rewards)
+    plt.figure()
+    plt.title("Losses")
+    plt.plot(list(range(len(losses))), losses, 'b.')
+    plt.show()
+
+    i = 0
+    while os.path.exists(f"snake{i}.pth"):
+        i += 1
+
+    snake_net.save_to_file(f"snake{i}.pth")
