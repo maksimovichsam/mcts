@@ -7,6 +7,7 @@ import math
 import torch
 from typing import Optional
 from torch.nn import functional as F
+import pickle
 
 MAXIMUM_FLOAT_VALUE = float('inf')
 KnownBounds = namedtuple('KnownBounds', ['min', 'max'])
@@ -98,11 +99,11 @@ class MCTSZeroNode(ABC):
         # print("action, reward: ", action, reward)
         return action, reward, child_node
 
-    def expand(self) -> float:
-        self.p, self.v = self.evaluate(self.state())
-        self.visits      = torch.zeros((len(self.p), ), dtype=torch.float)
-        self.total_value = torch.zeros((len(self.p), ), dtype=torch.float)
-        self.q           = 0 * torch.ones((len(self.p), ), dtype=torch.float)
+    def expand(self, device) -> float:
+        self.p, self.v = self.evaluate(self.state(device))
+        self.visits      = torch.zeros((len(self.p), ), dtype=torch.float, device=device)
+        self.total_value = torch.zeros((len(self.p), ), dtype=torch.float, device=device)
+        self.q           = 0 * torch.ones((len(self.p), ), dtype=torch.float, device=device)
         return self.v
 
     def backup(self, child_index: int, value: float, min_max_stats) -> None:
@@ -214,7 +215,7 @@ class DequeGameBuffer:
 class MCTSZero:
 
     @staticmethod
-    def search(node: MCTSZeroNode, min_max_stats, gamma=0.997, simulations:int=100, temperature:float=1, root_noise=None) -> SearchPolicy:
+    def search(node: MCTSZeroNode, min_max_stats, device, gamma=0.997, simulations:int=100, temperature:float=1, root_noise=None) -> SearchPolicy:
         root: MCTSZeroNode = node
         debug = False
         for i in range(simulations):
@@ -222,13 +223,11 @@ class MCTSZero:
             while not node.is_leaf() and not node.is_terminal():
                 action, reward, new_node = node.select(min_max_stats, gamma=gamma, noise=root_noise if node == root else None)
                 path.append((action, reward, node))
-                if debug:
-                    print(node.game)
                 if len(path) > 1000:
                     assert False, "Infinite loop"
                 node = new_node
            
-            R = node.v if node.v is not None else node.expand()
+            R = node.v if node.v is not None else node.expand(device)
             for index, (action, reward, parent) in enumerate(reversed(path)):
                 R = reward + R * gamma
                 parent.backup(action, R, min_max_stats)
@@ -244,18 +243,20 @@ class MCTSZero:
         rewards = []
         episode_step = 0
 
+        DEVICE = torch.device("cuda" if hp.cuda else "cpu")
+
         min_max_stats = MinMaxStats()
         temperature_threshold = float('inf') if not hasattr(hp, "temperature_threshold") else hp.temperature_threshold
         temperature_threshold = float('inf') if temperature_threshold is None else temperature_threshold
-        while not node.is_terminal() and episode_step < 400:
+        while not node.is_terminal():
             tau = 1.0 if episode_step < temperature_threshold else 0.0
-            policy = MCTSZero.search(node, min_max_stats, temperature=tau, gamma=gamma, **kwargs)
+            policy = MCTSZero.search(node, min_max_stats, DEVICE, temperature=tau, gamma=gamma, **kwargs)
 
-            pi = torch.zeros((node.action_space(), ))
+            pi = torch.zeros((node.action_space(), ), device=DEVICE)
             pi[node.legal_actions()] = policy.weights
 
             v = torch.sum((node.visits / node.total_visits) * node.q)
-            examples.append([node, node.state(), pi, v.item()])
+            examples.append([node, node.state(device=DEVICE), pi, v.item()])
 
             action = policy.pick()
             reward, node = node.node_children()[action]
@@ -291,6 +292,16 @@ class MCTSZero:
         MCTSZeroNode.c_puct = c_puct
         hp = evaluator.hp
 
+        if hasattr(hp, 'alpha') and hp.alpha is not None:
+            game_buffer = AveragingGameBuffer(hp.alpha)
+        else:
+            game_buffer = DequeGameBuffer(buffer_size)
+
+        if hasattr(hp, 'load_file') and hp.load_file is not None:
+            with open(hp.load_file, 'rb') as file:
+                game_buffer = pickle.load(file)
+            print("game_buffer: ", len(game_buffer))            
+
         optimizer = torch.optim.AdamW(evaluator.parameters(), lr=evaluator.hp.lr,
             weight_decay=hp.weight_decay)
         
@@ -299,10 +310,8 @@ class MCTSZero:
             , gamma=hp.gamma if hasattr(hp, 'gamma') else 0.1
             , verbose=True)
 
-        if hasattr(hp, 'alpha') and hp.alpha is not None:
-            game_buffer = AveragingGameBuffer(hp.alpha)
-        else:
-            game_buffer = DequeGameBuffer(buffer_size)
+        DEVICE = torch.device("cuda" if hp.cuda else "cpu")
+        print("device: ", DEVICE)
 
         A = root.action_space()
 
@@ -335,7 +344,7 @@ class MCTSZero:
                     states, policies, r = unzip(game_buffer[game_buffer_order[i]] for i in range(batch_start, batch_end))
                     states = torch.concat(states)
                     policies = torch.stack(policies)
-                    r = torch.tensor(r, dtype=torch.float).reshape((-1, 1))
+                    r = torch.tensor(r, dtype=torch.float, device=DEVICE).reshape((-1, 1))
                     assert not r.requires_grad
                     assert not policies.requires_grad
 
@@ -359,10 +368,16 @@ class MCTSZero:
 
                 total_loss /= num_batches
                 losses.append(total_loss)
-                print(f"Loss: {total_loss:>10.4f} Iteration [{iteration+1:>5.0f}/{iterations:>5.0f}] Batch [{batch_number:>8.0f}/{num_batches:>8.0f}]")
+                print(f"Loss: {total_loss:>10.4f} Iteration [{iteration+1:>5.0f}/{iterations:>5.0f}] Epoch [{epoch:>8.0f}/{num_epochs:>8.0f}]")
 
             avg_R = sum(rewards[-num_episodes:]) / num_episodes
             print(f"Iteration [{iteration+1:>5d}/{iterations}], took {Timer.str('iteration')}, best reward: {best_reward}, average reward: {avg_R}")
             lr_scheduler.step()
+
+            if hasattr(hp, 'save_file') and hp.save_file is not None:
+                if (iteration+1) % hp.checkpoint == 0:
+                    print("Saving replay buffer to file")
+                    with open(hp.save_file, "wb") as file:
+                        pickle.dump(game_buffer, file)
 
         return losses, rewards

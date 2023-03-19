@@ -27,28 +27,28 @@ class SnakeNet(nn.Module):
         super(SnakeNet, self).__init__()
         self.non_linear = nn.ReLU
 
-        # same padding => 2*p + k + 1 = 0 => p = (k - 1) / 2
+       # same padding => 2*p + k + 1 = 0 => p = (k - 1) / 2
         # (32, 32, 2, 2) -> (16, 16, 2, 2) -> (8, 8, 2, 2) -> (4, 4, 2, 2)
         self.cnn = nn.Sequential(
             # 8, 8
             # ResidualBlock(64, 128, self.non_linear),
-            nn.Conv2d(4, 32, kernel_size=3, padding=1),
+            nn.Conv2d(4, 1024, kernel_size=3, padding=1),
             nn.MaxPool2d(kernel_size=2, stride=2),
             # 4, 4
-            nn.BatchNorm2d(32),
+            nn.BatchNorm2d(1024),
             # ResidualBlock(32, 64, self.non_linear),
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.Conv2d(1024, 2048, kernel_size=3, padding=1),
             nn.MaxPool2d(kernel_size=2, stride=2),
             # 2, 2
         )
         self.cnn_out = self.cnn(torch.randn((1, 4, 8, 8))).numel()
-        assert self.cnn_out == 2*2*64, f"Got cnn_out={self.cnn_out}"
+        assert self.cnn_out == 2*2*2048, f"Got cnn_out={self.cnn_out}"
         self.mlp = nn.Sequential(
-            nn.Linear(self.cnn_out, 256),
+            nn.Linear(self.cnn_out, 2048),
             self.non_linear(),
-            nn.Linear(256, 128),
+            nn.Linear(2048, 512),
             self.non_linear(),
-            nn.Linear(128, 64),
+            nn.Linear(512, 64),
             self.non_linear(),
             nn.Linear(64, 5)
         )
@@ -72,6 +72,8 @@ class SnakeNetController:
         if load_file is not None:
             self.model.load_from_file(load_file)
         SnakeZeroNode.evaluator = self.model        
+        num_params = sum(p.numel() for p in self.model.parameters())
+        print(f"SnakeNet model has {num_params:,} parameters")
         self.snake = snake
 
     def make_move(self, board):
@@ -113,11 +115,11 @@ class SnakeZeroNode(MCTSZeroNode):
         self.game = game
         self.state_tensor = None
 
-    def state(self):
+    def state(self, device):
         if self.state_tensor is None:
             INDICES = [0, 1, 2, 3]
             BLANK, APPLE, HEAD, SNAKE = INDICES
-            self.state_tensor = torch.zeros((1, len(INDICES), SnakeBoard.height, SnakeBoard.width))
+            self.state_tensor = torch.zeros((1, len(INDICES), SnakeBoard.height, SnakeBoard.width), dtype=torch.float, device=device)
             self.state_tensor[:, BLANK, :, :] = 1
             self.state_tensor[:, BLANK, self.game.apple[1], self.game.apple[0]] = 0
             self.state_tensor[:, APPLE, self.game.apple[1], self.game.apple[0]] = 1
@@ -170,7 +172,7 @@ class SnakeZeroNode(MCTSZeroNode):
         assert False
 
 
-if __name__ == "__main__":
+def main():
     import os.path
     import torch
     import random
@@ -178,11 +180,12 @@ if __name__ == "__main__":
     from mcts_zero import MCTSZero
 
     hp = BasicNN.HyperParameters()
+    hp.cuda = True
     hp.lr = 0.001
-    hp.iterations = 10
+    hp.iterations = 40
     hp.simulations = 10
-    hp.num_episodes = 100
-    hp.num_epochs = 40
+    hp.num_episodes = 25
+    hp.num_epochs = 15
     hp.batch_size = 64
     hp.buffer_size = 64 * 1000
     hp.temperature_threshold = None
@@ -191,6 +194,8 @@ if __name__ == "__main__":
     hp.lr_decay_steps = 10000
     hp.gamma = 0.1
     hp.alpha = None
+    hp.checkpoint = 5
+    hp.save_file = "./replay_buffer.pickle"
     torch.manual_seed(0)
     random.seed(0)
     np.random.seed(0)
@@ -198,8 +203,11 @@ if __name__ == "__main__":
     print(f"Hyperparameters:\n{hp_string}")
 
     snake_net = SnakeNet()
-    snake_net.load_from_file('./snake0.pth')
+    # snake_net.load_from_file('./snake0.pth')
     snake_net.hp = hp
+    if hp.cuda:
+        assert torch.cuda.is_available()
+        snake_net.to('cuda')
     SnakeZeroNode.evaluator = snake_net
 
     root = SnakeZeroNode.init_game()
@@ -234,3 +242,7 @@ if __name__ == "__main__":
         i += 1
 
     snake_net.save_to_file(f"snake{i}.pth")
+
+
+if __name__ == "__main__":
+    main()

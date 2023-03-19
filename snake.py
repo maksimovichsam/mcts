@@ -283,7 +283,7 @@ if __name__ == "__main__":
             # , SnakePlayer.build_snake(12, 12, Direction.RIGHT)
         ]
         controllers = [
-            SnakeNetController(players[0], 'snake0.pth')
+            SnakeNetController(players[0])
             # HumanController(players[0], keyset=HumanController.ARROWS)
             #, HumanController(players[1], keyset=HumanController.WASD)
         ]
@@ -313,7 +313,7 @@ if __name__ == "__main__":
         if not infinite_mode:
             break
 
-        print(stats, len(board.players[0].tiles))
+        # print(stats, len(board.players[0].tiles))
         next_game = True
         while not next_game:
             for event in pygame.event.get():
