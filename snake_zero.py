@@ -203,6 +203,7 @@ def main():
     print(f"Hyperparameters:\n{hp_string}")
 
     snake_net = SnakeNet()
+    snake_net = torch.compile(snake_net)
     # snake_net.load_from_file('./snake0.pth')
     snake_net.hp = hp
     if hp.cuda:
@@ -241,7 +242,7 @@ def main():
     while os.path.exists(f"snake{i}.pth"):
         i += 1
 
-    snake_net.save_to_file(f"snake{i}.pth")
+    torch.save(snake_net.state_dict(), f"snake{i}.pth")
 
 
 if __name__ == "__main__":
